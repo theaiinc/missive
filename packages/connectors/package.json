@@ -1,0 +1,24 @@
+{
+  "name": "@theaiinc/missive-connectors",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Missive connectors for Gmail, Outlook, and more",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@theaiinc/missive-core": "workspace:*",
+    "googleapis": "^144.0.0",
+    "axios": "^1.7.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@theaiinc/missive-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Missive AI features: summarization, classification, entity extraction",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@theaiinc/missive-core": "workspace:*",
+    "openai": "^6.42.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

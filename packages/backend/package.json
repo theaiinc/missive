@@ -1,0 +1,41 @@
+{
+  "name": "@theaiinc/missive-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Missive NestJS backend",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && concurrently -k -n compile,run \"tsc --watch\" \"node --watch dist/main.js\"",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/event-emitter": "^3.1.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@theaiinc/missive-core": "workspace:*",
+    "dotenv": "^17.4.2",
+    "googleapis": "^173.0.0",
+    "imapflow": "^1.3.7",
+    "mailparser": "^3.9.9",
+    "pg": "^8.13.0",
+    "redis": "^4.7.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.0.0",
+    "@types/express": "^5.0.6",
+    "@types/mailparser": "^3.4.6",
+    "@types/pg": "^8.20.0",
+    "concurrently": "^10.0.3",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

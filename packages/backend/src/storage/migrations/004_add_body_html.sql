@@ -1,0 +1,1 @@
+ALTER TABLE missives ADD COLUMN IF NOT EXISTS body_html TEXT;

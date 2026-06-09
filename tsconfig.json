@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/backend" },
+    { "path": "./packages/connectors" },
+    { "path": "./packages/ai" },
+    { "path": "./packages/web" }
+  ]
+}
