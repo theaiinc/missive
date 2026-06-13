@@ -1,3 +1,9 @@
+# ── WARNING ─────────────────────────────────────────────────────
++# Never run `docker compose down -v` — it destroys the database volume.
++# Use `docker compose down` (without -v) to stop cleanly.
++# To back up:  docker run --rm -v missive_pgdata:/data -v .:/backup alpine tar czf /backup/pg-backup.tar.gz -C /data .
++# To restore:  docker run --rm -v missive_pgdata:/data -v .:/backup alpine tar xzf /backup/pg-backup.tar.gz -C /data
++# ────────────────────────────────────────────────────────────────
 version: "3.9"
 services:
   postgres:
