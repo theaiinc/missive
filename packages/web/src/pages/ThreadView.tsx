@@ -164,6 +164,12 @@ function EmailCard({ missive }: { missive: Missive }) {
     } catch {}
   }, []);
 
+  const onIframeLoad = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (doc) openLinksInNewTabs(doc);
+    resizeIframe();
+  }, [resizeIframe]);
+
   useEffect(() => {
     if (!iframeRef.current || !missive.bodyHtml) return;
     // Initial resize after a small delay to let the srcdoc render
@@ -228,10 +234,12 @@ function EmailCard({ missive }: { missive: Missive }) {
             ref={iframeRef}
             className="w-full border-0"
             style={{ minHeight: "200px" }}
-            sandbox="allow-same-origin"
+            // No scripts. Links may open a new tab (openLinksInNewTabs), and
+            // that tab is an ordinary page, not sandboxed like the email.
+            sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
             title="Email body"
             srcDoc={wrapEmailHtml(missive.bodyHtml)}
-            onLoad={resizeIframe}
+            onLoad={onIframeLoad}
           />
         ) : (
           <div className="px-4 py-3 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
@@ -241,6 +249,26 @@ function EmailCard({ missive }: { missive: Missive }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Web links in an email open in a new tab, whatever target the email gave
+ * them, and without window.opener or a referrer, so the site can't reach
+ * Missive or see which message the link came from. mailto:, tel: and
+ * in-message (#) links are left alone.
+ */
+function openLinksInNewTabs(doc: Document) {
+  for (const base of Array.from(doc.querySelectorAll("base[target]"))) base.removeAttribute("target");
+  for (const link of Array.from(doc.querySelectorAll<HTMLAnchorElement | HTMLAreaElement>("a[href], area[href]"))) {
+    // "#…" resolves against Missive's own URL in a srcdoc frame; it jumps within the message.
+    if (link.getAttribute("href")?.trim().startsWith("#")) continue;
+    if (/^https?:$/.test(link.protocol)) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    } else if (link.target) {
+      link.removeAttribute("target");
+    }
+  }
 }
 
 /**
