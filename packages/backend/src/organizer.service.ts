@@ -1,3 +1,4 @@
+import { openRow, openRows, seal, sealJson } from "./storage/content-crypto";
 import { safeError } from "./log-safe";
 import { Injectable, Logger } from "@nestjs/common";
 import { StorageService } from "./storage/storage.service";
@@ -76,8 +77,8 @@ export class OrganizerService {
 
       if (rows.length === 0) return 0;
 
-      // Batch classify all at once
-      const results = await this.batchClassify(rows);
+      // Batch classify all at once (on decrypted subject/sender/body)
+      const results = await this.batchClassify(await openRows("missives", rows));
       let processed = 0;
 
       for (const result of results) {
@@ -163,7 +164,7 @@ export class OrganizerService {
 
     // Get missives since last digest
     const { rows } = await this.pg.query(
-      `SELECT m.id, m.thread_id, m.subject, m.sender_name, m.sender_address,
+      `SELECT m.id, m.owner_id, m.thread_id, m.subject, m.sender_name, m.sender_address,
               m.body, m.classification, m.folder, m.created_at
        FROM missives m
        WHERE m.created_at > $1
@@ -176,7 +177,7 @@ export class OrganizerService {
 
     // Build the digest via AI
     const items: DigestItem[] = [];
-    const summary = await this.buildDigestSummary(rows, items);
+    const summary = await this.buildDigestSummary(await openRows("missives", rows), items);
 
     const id = `digest_${Date.now()}`;
     await this.pg.query(
@@ -184,8 +185,8 @@ export class OrganizerService {
        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
       [
         id,
-        summary,
-        JSON.stringify(items),
+        await seal("digests", "summary", summary),
+        await sealJson("digests", "items", items),
         since,
         periodEnd,
         rows.length,
@@ -207,7 +208,7 @@ export class OrganizerService {
       "SELECT * FROM digests WHERE id = $1",
       [id]
     );
-    return saved.rows.length > 0 ? rowToDigest(saved.rows[0]) : null;
+    return saved.rows.length > 0 ? rowToDigest(await openRow("digests", saved.rows[0])) : null;
   }
 
   /** Get the latest digest */
@@ -215,7 +216,7 @@ export class OrganizerService {
     const { rows } = await this.pg.query(
       "SELECT * FROM digests ORDER BY created_at DESC LIMIT 1"
     );
-    return rows.length > 0 ? rowToDigest(rows[0]) : null;
+    return rows.length > 0 ? rowToDigest(await openRow("digests", rows[0])) : null;
   }
 
   /** List recent digests */
@@ -224,7 +225,7 @@ export class OrganizerService {
       "SELECT * FROM digests ORDER BY created_at DESC LIMIT $1",
       [limit]
     );
-    return rows.map(rowToDigest);
+    return (await openRows("digests", rows)).map(rowToDigest);
   }
 
   // ── Private helpers ──
