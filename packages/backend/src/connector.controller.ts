@@ -1,5 +1,7 @@
 import { safeError } from "./log-safe";
-import { Controller, Get, Post, Delete, Body, Query, ServiceUnavailableException } from "@nestjs/common";
+import { Controller, Get, Post, Delete, Body, Query, Req, ServiceUnavailableException } from "@nestjs/common";
+import type { Request } from "express";
+import { siteFor } from "./auth/sites";
 import { google } from "googleapis";
 import { ConnectorStore } from "./connector.store";
 import { SyncService } from "./sync.service";
@@ -16,23 +18,23 @@ export class ConnectorController {
   // ── Gmail Auth ──
 
   @Get("gmail/auth")
-  getGmailAuthUrl(): { url: string } {
+  getGmailAuthUrl(@Req() req: Request): { url: string } {
     if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
       throw new ServiceUnavailableException("Connecting Gmail isn't set up on this server yet.");
     }
-    return { url: this.store.getGmailAuthUrl() };
+    return { url: this.store.getGmailAuthUrl(siteFor(req).appUrl) };
   }
 
   // ── Gmail Token Exchange ──
 
   @Post("gmail/token")
-  async exchangeGmailToken(@Body() body: { code: string }) {
+  async exchangeGmailToken(@Req() req: Request, @Body() body: { code: string }) {
     if (!body.code) {
       return { error: "missing_code" };
     }
 
     try {
-      const oauth2 = this.store.createOAuth2Client();
+      const oauth2 = this.store.createOAuth2Client(siteFor(req).appUrl);
       const { tokens } = await oauth2.getToken(body.code);
       oauth2.setCredentials(tokens);
 
@@ -99,21 +101,21 @@ export class ConnectorController {
   // ── Outlook / Microsoft ──
 
   @Get("outlook/auth")
-  getOutlookAuthUrl(): { url: string } {
+  getOutlookAuthUrl(@Req() req: Request): { url: string } {
     if (!process.env.OUTLOOK_CLIENT_ID || !process.env.OUTLOOK_CLIENT_SECRET) {
       throw new ServiceUnavailableException("Connecting Outlook isn't set up on this server yet.");
     }
-    return { url: this.store.getOutlookAuthUrl() };
+    return { url: this.store.getOutlookAuthUrl(siteFor(req).appUrl) };
   }
 
   @Post("outlook/token")
-  async exchangeOutlookToken(@Body() body: { code: string }) {
+  async exchangeOutlookToken(@Req() req: Request, @Body() body: { code: string }) {
     if (!body.code) {
       return { error: "missing_code" };
     }
 
     try {
-      const { tokens, email } = await this.store.exchangeOutlookCode(body.code);
+      const { tokens, email } = await this.store.exchangeOutlookCode(body.code, siteFor(req).appUrl);
       const connector = await this.store.save("outlook", {
         provider: "outlook",
         label: email,

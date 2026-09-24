@@ -3,6 +3,7 @@ import { addressIndex } from "./identity-crypto";
 import { Injectable } from "@nestjs/common";
 import { google, type Auth } from "googleapis";
 import { PostgresService } from "./storage/postgres.service";
+import { mainSite } from "./auth/sites";
 
 export interface StoredConnector {
   id: string;
@@ -14,8 +15,15 @@ export interface StoredConnector {
   lastSyncAt?: string | null;
 }
 
-/** The web app's OAuth landing page (pages/OAuthCallback) on this deployment. */
-const defaultOAuthRedirect = () => `${process.env.APP_URL ?? "http://localhost:5173"}/oauth`;
+/**
+ * The web app's OAuth landing page (pages/OAuthCallback) at the address the
+ * person is using (see auth/sites.ts), so connecting an account from
+ * mail.bugmole.com returns there, where their session is. Each address must
+ * be an allowed redirect in the Google / Microsoft app.
+ */
+const oauthRedirect = (appUrl: string, override: string | undefined) => override || `${appUrl}/oauth`;
+const gmailRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.GMAIL_REDIRECT_URI);
+const outlookRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.OUTLOOK_REDIRECT_URI);
 
 @Injectable()
 export class ConnectorStore {
@@ -23,16 +31,17 @@ export class ConnectorStore {
 
   // ── Gmail OAuth ──
 
-  createOAuth2Client(): Auth.OAuth2Client {
+  /** appUrl only matters for the sign-in and code exchange; refreshing doesn't use a redirect. */
+  createOAuth2Client(appUrl = mainSite().appUrl): Auth.OAuth2Client {
     return new google.auth.OAuth2(
       process.env.GMAIL_CLIENT_ID,
       process.env.GMAIL_CLIENT_SECRET,
-      process.env.GMAIL_REDIRECT_URI || defaultOAuthRedirect()
+      gmailRedirect(appUrl)
     );
   }
 
-  getGmailAuthUrl(): string {
-    const oauth2 = this.createOAuth2Client();
+  getGmailAuthUrl(appUrl: string): string {
+    const oauth2 = this.createOAuth2Client(appUrl);
     return oauth2.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
@@ -99,13 +108,13 @@ export class ConnectorStore {
   // ── Outlook / Microsoft OAuth ──
 
   private get outlookTenant(): string {
-    return process.env.OUTLOOK_TENANT ?? "common";
+    // The Worker passes "" when OUTLOOK_TENANT isn't set, which made the URL "//oauth2/…".
+    return process.env.OUTLOOK_TENANT || "common";
   }
 
-  getOutlookAuthUrl(): string {
+  getOutlookAuthUrl(appUrl: string): string {
     const clientId = process.env.OUTLOOK_CLIENT_ID;
-    const redirectUri =
-      process.env.OUTLOOK_REDIRECT_URI || defaultOAuthRedirect();
+    const redirectUri = outlookRedirect(appUrl);
     const scope =
       "openid profile email User.Read Mail.Read Mail.ReadBasic Mail.Send offline_access IMAP.AccessAsUser.All";
     return (
@@ -121,13 +130,13 @@ export class ConnectorStore {
   }
 
   async exchangeOutlookCode(
-    code: string
+    code: string,
+    appUrl: string
   ): Promise<{
     tokens: { access_token: string; refresh_token?: string; expiry_date?: number };
     email: string;
   }> {
-    const redirectUri =
-      process.env.OUTLOOK_REDIRECT_URI || defaultOAuthRedirect();
+    const redirectUri = outlookRedirect(appUrl);
     const res = await fetch(
       `https://login.microsoftonline.com/${this.outlookTenant}/oauth2/v2.0/token`,
       {
