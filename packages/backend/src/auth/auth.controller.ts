@@ -18,7 +18,7 @@ const clientId = () => process.env.AEGIS_CLIENT_ID ?? "missive";
 const appUrl = () => process.env.APP_URL ?? "http://localhost:5173";
 const redirectUri = () => `${appUrl()}/auth/callback`;
 
-type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string };
+type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown };
 type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; exp: number };
 
 /** Checks the id_token's RS256 signature against Aegis's JWKS, then issuer, audience, expiry and nonce. */
@@ -72,7 +72,8 @@ export class AuthController {
       client_id: clientId(),
       redirect_uri: redirectUri(),
       response_type: "code",
-      scope: "openid email profile",
+      // "mailbox": Aegis adds mailbox_domain for a blank account that may claim a hosted mailbox.
+      scope: "openid email profile mailbox",
       state: saved.state,
       nonce: saved.nonce,
       code_challenge: pkceChallenge(verifier),
@@ -115,6 +116,8 @@ export class AuthController {
     } catch {
       return res.status(403).type("html").send(`<p>${claims.email.replace(/[<>&"]/g, "")} is already linked to another Aegis account.</p>`);
     }
+    // Refreshed on every sign-in: the offer follows what Aegis says now.
+    await this.users.setMailboxOffer(user.id, typeof claims.mailbox_domain === "string" ? claims.mailbox_domain.toLowerCase() : null);
     const session: Session = { userId: user.id, exp: Date.now() + SESSION_HOURS * 3600_000 };
     res.setHeader("set-cookie", [
       cookie(SESSION_COOKIE, seal(session), SESSION_HOURS * 3600),
@@ -139,7 +142,7 @@ export class AuthController {
   @Get("api/v1/me")
   async me() {
     const user = requireUser();
-    const mailboxes = await this.users.mailboxesOf(user.id);
-    return { id: user.id, email: user.email, name: user.name, mailboxes };
+    const [mailboxes, offerDomain] = await Promise.all([this.users.mailboxesOf(user.id), this.users.mailboxOffer(user.id)]);
+    return { id: user.id, email: user.email, name: user.name, mailboxes, mailboxOffer: offerDomain ? { domain: offerDomain } : null };
   }
 }

@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, NotFoundException, Post, Req, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, NotFoundException, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { MailboxService, SendError } from "./mailbox.service";
 import { UsersService } from "./users.service";
-import { runAsUser } from "./request-context";
+import { requireUser, runAsUser } from "./request-context";
+import { localPartProblem, normalizeLocalPart } from "./mailbox-claim";
 
 const validEmail = (s: unknown): s is string => typeof s === "string" && /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(s);
 const list = (value: unknown): string[] =>
@@ -50,6 +51,37 @@ export class MailboxController {
   }
 
   /** Sends from one of the signed-in user's mailboxes. */
+  /**
+   * Is <localPart>@<offered domain> free? Only for someone with a mailbox offer
+   * (see UsersService.mailboxOffer); the domain always comes from the offer.
+   */
+  @Get("mailboxes/available")
+  async available(@Query("localPart") raw: unknown) {
+    const user = requireUser();
+    const domain = await this.users.mailboxOffer(user.id);
+    if (!domain) throw new ForbiddenException("No mailbox to claim");
+    const localPart = normalizeLocalPart(raw);
+    const problem = localPartProblem(localPart);
+    const address = `${localPart}@${domain}`;
+    if (problem) return { address, available: false, reason: problem };
+    const taken = await this.users.addressTaken(address);
+    return { address, available: !taken, ...(taken && { reason: "taken" }) };
+  }
+
+  /** Claims <localPart>@<offered domain> as the signed-in person's hosted mailbox. */
+  @Post("mailboxes")
+  async claim(@Body() body: { localPart?: unknown }) {
+    const user = requireUser();
+    const domain = await this.users.mailboxOffer(user.id);
+    if (!domain) throw new ForbiddenException("No mailbox to claim");
+    const localPart = normalizeLocalPart(body?.localPart);
+    const problem = localPartProblem(localPart);
+    if (problem) throw new BadRequestException(problem === "reserved" ? "That address is reserved" : "Use letters, numbers and . _ - only");
+    const mailbox = await this.users.createMailbox(user.id, `${localPart}@${domain}`, domain, user.name);
+    if (!mailbox) throw new ConflictException("That address was just taken");
+    return { mailbox };
+  }
+
   @Post("send")
   async send(@Body() body: Record<string, unknown>) {
     const to = list(body.to);
