@@ -4,7 +4,7 @@ import { createPublicKey, verify as verifySignature, type JsonWebKey } from "nod
 import { UsersService } from "../users.service";
 import { requireUser } from "../request-context";
 import {
-  SESSION_COOKIE, STATE_COOKIE, SESSION_HOURS,
+  SESSION_COOKIE, STATE_COOKIE, INVITE_COOKIE, SESSION_HOURS,
   seal, unseal, readCookie, cookie, randomToken, pkceChallenge, type Session,
 } from "./session";
 import { siteFor, type Site } from "./sites";
@@ -120,10 +120,14 @@ export class AuthController {
     }
     // Refreshed on every sign-in: the offer follows what Aegis says now.
     await this.users.setMailboxOffer(user.id, typeof claims.mailbox_domain === "string" ? claims.mailbox_domain.toLowerCase() : null);
+    // Came in through a mailbox invitation: that address is theirs now (once).
+    const invite = unseal<{ token: string; exp: number }>(readCookie(req.headers.cookie, INVITE_COOKIE));
+    if (invite) await this.users.claimInvite(invite.token, user.id);
     const session: Session = { userId: user.id, exp: Date.now() + SESSION_HOURS * 3600_000 };
     res.setHeader("set-cookie", [
       cookie(SESSION_COOKIE, seal(session), SESSION_HOURS * 3600),
       cookie(STATE_COOKIE, "", 0),
+      cookie(INVITE_COOKIE, "", 0),
     ]);
     res.redirect(302, saved.returnTo);
   }

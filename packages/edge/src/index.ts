@@ -31,6 +31,8 @@ export interface Env {
   INBOUND_SECRET: string;
   /** Master key for email data at rest (see core/src/crypto.ts). */
   MISSIVE_DATA_KEY: string;
+  /** Bearer token for the admin API (mailbox invitations). */
+  ADMIN_TOKEN?: string;
   /** The API proves itself to the Worker with this when it sends mail. */
   EDGE_SECRET: string;
   /** Optional: OAuth apps for connecting Gmail / Outlook accounts (Settings). Redirect: APP_URL/oauth. */
@@ -88,6 +90,7 @@ export class MissiveApi extends Container<Env> {
       SESSION_SECRET: env.SESSION_SECRET,
       INBOUND_SECRET: env.INBOUND_SECRET,
       MISSIVE_DATA_KEY: env.MISSIVE_DATA_KEY,
+      ADMIN_TOKEN: env.ADMIN_TOKEN ?? "",
       EDGE_URL: env.APP_URL,
       EDGE_SECRET: env.EDGE_SECRET,
       MISSIVE_ORGANIZER: env.MISSIVE_ORGANIZER ?? "",

@@ -5,7 +5,7 @@ import { UsersService } from "../users.service";
 import { SESSION_COOKIE, readCookie, unseal, type Session } from "./session";
 
 /** Routes that don't need a signed-in user (they check their own credentials). */
-const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/];
+const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/, /^\/api\/v1\/admin\//];
 
 /**
  * Every other request needs an Aegis session and runs as that user, which is
