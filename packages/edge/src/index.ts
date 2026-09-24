@@ -14,6 +14,14 @@ export interface Env {
   APP_URL: string;
   AEGIS_ISSUER: string;
   AEGIS_CLIENT_ID: string;
+  /** More addresses Missive is served at, "host=clientId,…" (backend auth/sites.ts). */
+  MISSIVE_SITES?: string;
+  /**
+   * "domain=address,…": mail for a domain's addresses that aren't Missive
+   * mailboxes is forwarded to that (Email Routing–verified) address instead
+   * of being rejected, so Missive can take a domain's catch-all.
+   */
+  FORWARD_UNKNOWN?: string;
   MISSIVE_ORGANIZER?: string;
   // Secrets
   DATABASE_URL: string;
@@ -31,6 +39,30 @@ export interface Env {
   OUTLOOK_CLIENT_ID?: string;
   OUTLOOK_CLIENT_SECRET?: string;
   OUTLOOK_TENANT?: string;
+  /** Secrets for the MISSIVE_SITES clients: AEGIS_CLIENT_SECRET_<CLIENT_ID>. */
+  [secret: `AEGIS_CLIENT_SECRET_${string}`]: string | undefined;
+}
+
+/** The backend reads which address a request came in on from this (auth/sites.ts). */
+const SITE_HEADER = "x-missive-host";
+
+/** The AEGIS_CLIENT_SECRET_<CLIENT_ID> secrets, for the container. */
+function siteSecrets(env: Env): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      (entry): entry is [string, string] => entry[0].startsWith("AEGIS_CLIENT_SECRET_") && typeof entry[1] === "string"
+    )
+  );
+}
+
+/** Where FORWARD_UNKNOWN sends a domain's unknown recipients, if anywhere. */
+export function forwardFor(forwardUnknown: string | undefined, recipient: string): string | null {
+  const domain = recipient.slice(recipient.lastIndexOf("@") + 1).toLowerCase();
+  for (const pair of (forwardUnknown ?? "").split(",")) {
+    const [d, to] = pair.split("=").map((s) => s?.trim());
+    if (d && to && d.toLowerCase() === domain) return to;
+  }
+  return null;
 }
 
 /** The Missive API (Dockerfile.backend). Its settings come from this Worker's vars and secrets. */
@@ -51,6 +83,8 @@ export class MissiveApi extends Container<Env> {
       AEGIS_ISSUER: env.AEGIS_ISSUER,
       AEGIS_CLIENT_ID: env.AEGIS_CLIENT_ID,
       AEGIS_CLIENT_SECRET: env.AEGIS_CLIENT_SECRET,
+      MISSIVE_SITES: env.MISSIVE_SITES ?? "",
+      ...siteSecrets(env),
       SESSION_SECRET: env.SESSION_SECRET,
       INBOUND_SECRET: env.INBOUND_SECRET,
       MISSIVE_DATA_KEY: env.MISSIVE_DATA_KEY,
@@ -121,7 +155,12 @@ export default {
     if (url.pathname.startsWith("/internal/")) return json({ error: "Not found" }, 404);
     // /api/* and /auth/* go to the API; everything else is the web app
     // (run_worker_first in wrangler.jsonc sends only these paths here).
-    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) return api(env).fetch(request);
+    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) {
+      // Set here, never taken from the browser: it picks the Aegis client.
+      const forwarded = new Request(request);
+      forwarded.headers.set(SITE_HEADER, url.host);
+      return api(env).fetch(forwarded);
+    }
     return env.ASSETS.fetch(request);
   },
 
@@ -153,8 +192,10 @@ export default {
       })
     );
     if (response.status === 404) {
-      message.setReject("No such mailbox");
       await env.INBOUND.delete(key);
+      const forwardTo = forwardFor(env.FORWARD_UNKNOWN, message.to);
+      if (forwardTo) await message.forward(forwardTo);
+      else message.setReject("No such mailbox");
       return;
     }
     // Anything else is our problem, not the sender's: the copy stays in R2
