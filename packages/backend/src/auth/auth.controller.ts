@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import { createPublicKey, verify as verifySignature, type JsonWebKey } from "node:crypto";
 import { UsersService } from "../users.service";
 import { GroupsService } from "../groups.service";
-import { isAdmin } from "../admin.controller";
+
 import { requireUser } from "../request-context";
 import {
   SESSION_COOKIE, STATE_COOKIE, INVITE_COOKIE, SESSION_HOURS,
@@ -19,7 +19,7 @@ import { siteFor, type Site } from "./sites";
 const issuer = () => process.env.AEGIS_ISSUER ?? "https://id.theaiinc.com";
 const redirectUri = (site: Site) => `${site.appUrl}/auth/callback`;
 
-type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown };
+type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown ; roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown };
 type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; clientId: string; exp: number };
 
 /** Checks the id_token's RS256 signature against Aegis's JWKS, then issuer, audience, expiry and nonce. */
@@ -84,7 +84,8 @@ export class AuthController {
       redirect_uri: redirectUri(site),
       response_type: "code",
       // "mailbox": Aegis adds mailbox_domain for a blank account that may claim a hosted mailbox.
-      scope: "openid email profile mailbox",
+      // "admin": Aegis adds the person's roles and managed tenants (who may use the admin console).
+      scope: "openid email profile mailbox admin",
       // "Try again" after a refused sign-in asks Aegis for the login again,
       // instead of reusing the Aegis session that was just refused.
       ...(req.query.prompt === "login" ? { prompt: "login" } : {}),
@@ -131,8 +132,8 @@ export class AuthController {
     } catch {
       return res.status(403).type("html").send(`<p>${claims.email.replace(/[<>&"]/g, "")} is already linked to another Aegis account.</p>`);
     }
-    // Their organization: the Aegis client (tenant) they came in through.
-    await this.users.setClient(user.id, site.clientId);
+    // Their organization (the client and tenant they came in through) and admin rights, as Aegis says now.
+    await this.users.recordSignIn(user.id, site.clientId, claims);
     // Refreshed on every sign-in: the offer follows what Aegis says now.
     await this.users.setMailboxOffer(user.id, typeof claims.mailbox_domain === "string" ? claims.mailbox_domain.toLowerCase() : null);
     // Came in through a mailbox invitation: that address is theirs now (once).
@@ -172,7 +173,7 @@ export class AuthController {
       // Password, passkeys and two-step sign-in live in Aegis (a passkey has to
       // be registered on Aegis's own origin); client_id picks this site's tenant.
       accountUrl: aegisAccountUrl(siteFor(req)),
-      isAdmin: isAdmin(user.email),
+      isAdmin: !!(await this.users.adminScope(user.id)),
     };
   }
 }

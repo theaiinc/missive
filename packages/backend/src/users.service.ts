@@ -8,6 +8,10 @@ import { runAsUser } from "./request-context";
 /** Only a hash of an invitation link's token is stored. */
 const inviteHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
+/** The admin claims Aegis sends with scope "admin". */
+export type AegisRoleClaims = { roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown };
+export type AdminScope = { platform: boolean; tenants: string[] };
+
 export type Mailbox = { address: string; domain: string; userId: string; displayName?: string };
 
 const rowToMailbox = async (r: any): Promise<Mailbox> => ({
@@ -61,20 +65,53 @@ export class UsersService {
     return rows[0] ? rowToUser(rows[0]) : null;
   }
 
-  /** Records the Aegis client (so the organization) someone signed in through. */
-  async setClient(userId: string, clientId: string): Promise<void> {
-    await this.pg.systemQuery(`UPDATE users SET aegis_client = $2 WHERE id = $1`, [userId, clientId]);
+  /**
+   * Records what Aegis said at sign-in: the client (organization) and tenant
+   * they came in through, and their admin rights. An ADMIN in their own
+   * tenant administers it; tenants they manage in Aegis count too.
+   */
+  async recordSignIn(userId: string, clientId: string, claims: AegisRoleClaims): Promise<void> {
+    const home = typeof claims.home_tenant_id === "string" ? claims.home_tenant_id : null;
+    const roles = Array.isArray(claims.roles) ? claims.roles.map(String) : typeof claims.role === "string" ? [claims.role] : [];
+    const managed = Array.isArray(claims.managed_tenant_ids) ? claims.managed_tenant_ids.map(String) : [];
+    const adminTenants = [...new Set([...(home && roles.includes("ADMIN") ? [home] : []), ...managed])];
+    await this.pg.systemQuery(
+      `UPDATE users SET aegis_client = $2, aegis_tenant = $3, admin_tenants = $4, platform_admin = $5 WHERE id = $1`,
+      [userId, clientId, home, adminTenants, claims.platform_admin === true],
+    );
+    if (home) {
+      await this.pg.systemQuery(
+        `INSERT INTO aegis_client_tenants (client_id, tenant_id) VALUES ($1, $2)
+         ON CONFLICT (client_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, seen_at = NOW()`,
+        [clientId, home],
+      );
+    }
+  }
+
+  /** What someone may administer: every tenant (platform admin), some, or nothing (null). */
+  async adminScope(userId: string): Promise<AdminScope | null> {
+    const { rows } = await this.pg.systemQuery(`SELECT admin_tenants, platform_admin FROM users WHERE id = $1`, [userId]);
+    const r = rows[0];
+    if (!r || (!r.platform_admin && !(r.admin_tenants ?? []).length)) return null;
+    return { platform: !!r.platform_admin, tenants: r.admin_tenants ?? [] };
+  }
+
+  /** The Aegis tenant each client signs in to, as learned from sign-ins. */
+  async clientTenants(): Promise<Record<string, string>> {
+    const { rows } = await this.pg.systemQuery(`SELECT client_id, tenant_id FROM aegis_client_tenants`);
+    return Object.fromEntries(rows.map((r: any) => [r.client_id, r.tenant_id]));
   }
 
   /** Everyone, for the admin console: who they are, their organization, and their mailboxes. */
-  async directory(): Promise<{ id: string; email: string; name?: string; client: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[] }[]> {
-    const { rows } = await this.pg.systemQuery(`SELECT id, email, name, aegis_client, aegis_sub, last_login_at FROM users`);
+  async directory(): Promise<{ id: string; email: string; name?: string; client: string | null; tenant: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[] }[]> {
+    const { rows } = await this.pg.systemQuery(`SELECT id, email, name, aegis_client, aegis_tenant, aegis_sub, last_login_at FROM users`);
     const people = await Promise.all(
       rows.map(async (r: any) => ({
         id: r.id,
         email: (await openIdentity("users.email", r.email))!,
         name: (await openIdentity("users.name", r.name)) ?? undefined,
         client: r.aegis_client ?? null,
+        tenant: r.aegis_tenant ?? null,
         signedIn: !!r.aegis_sub,
         lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : null,
         mailboxes: (await this.mailboxesOf(r.id)).map((m) => m.address),

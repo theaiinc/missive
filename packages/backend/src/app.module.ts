@@ -25,13 +25,13 @@ import { MailboxService } from "./mailbox.service";
 import { EncryptionBackfillService } from "./encryption-backfill.service";
 import { MailboxController } from "./mailbox.controller";
 import { InviteController } from "./invite.controller";
-import { AdminController } from "./admin.controller";
+import { AdminAccess, AdminController } from "./admin.controller";
 import { GroupsService } from "./groups.service";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
   controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController],
-  providers: [UsersService, GroupsService, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService],
+  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule implements NestModule {

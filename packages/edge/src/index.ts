@@ -16,7 +16,6 @@ export interface Env {
   AEGIS_CLIENT_ID: string;
   /** More addresses Missive is served at, "host=clientId,…" (backend auth/sites.ts). */
   MISSIVE_SITES?: string;
-  MISSIVE_ADMINS?: string;
   MISSIVE_ORG_NAMES?: string;
   /**
    * "domain=address,…": mail for a domain's addresses that aren't Missive
@@ -88,7 +87,6 @@ export class MissiveApi extends Container<Env> {
       AEGIS_CLIENT_ID: env.AEGIS_CLIENT_ID,
       AEGIS_CLIENT_SECRET: env.AEGIS_CLIENT_SECRET,
       MISSIVE_SITES: env.MISSIVE_SITES ?? "",
-      MISSIVE_ADMINS: env.MISSIVE_ADMINS ?? "",
       MISSIVE_ORG_NAMES: env.MISSIVE_ORG_NAMES ?? "",
       ...siteSecrets(env),
       SESSION_SECRET: env.SESSION_SECRET,
