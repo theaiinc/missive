@@ -32,7 +32,7 @@ export class MailboxController {
   /**
    * Mail for a hosted mailbox, posted by the edge Worker (Cloudflare Email
    * Routing) with INBOUND_SECRET. The body is the raw message (message/rfc822);
-   * x-envelope-to names the mailbox. 404 tells the Worker to reject the mail.
+   * x-envelope-to names the mailbox. 404 tells the Worker to reject the mail (or forward it: FORWARD_UNKNOWN).
    */
   @Post("inbound")
   @HttpCode(200)

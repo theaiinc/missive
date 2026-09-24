@@ -7,22 +7,21 @@ import {
   SESSION_COOKIE, STATE_COOKIE, SESSION_HOURS,
   seal, unseal, readCookie, cookie, randomToken, pkceChallenge, type Session,
 } from "./session";
+import { siteFor, type Site } from "./sites";
 
 /**
  * Sign-in with Aegis ID (OIDC authorization code + PKCE, confidential client).
- * Env: AEGIS_ISSUER (default https://id.theaiinc.com), AEGIS_CLIENT_ID,
- * AEGIS_CLIENT_SECRET, APP_URL, SESSION_SECRET.
+ * Env: AEGIS_ISSUER (default https://id.theaiinc.com), SESSION_SECRET, and
+ * the Aegis client for each address Missive is served at (see sites.ts).
  */
 const issuer = () => process.env.AEGIS_ISSUER ?? "https://id.theaiinc.com";
-const clientId = () => process.env.AEGIS_CLIENT_ID ?? "missive";
-const appUrl = () => process.env.APP_URL ?? "http://localhost:5173";
-const redirectUri = () => `${appUrl()}/auth/callback`;
+const redirectUri = (site: Site) => `${site.appUrl}/auth/callback`;
 
 type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown };
-type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; exp: number };
+type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; clientId: string; exp: number };
 
 /** Checks the id_token's RS256 signature against Aegis's JWKS, then issuer, audience, expiry and nonce. */
-async function verifyIdToken(token: string, nonce: string): Promise<IdClaims | null> {
+async function verifyIdToken(token: string, nonce: string, clientId: string): Promise<IdClaims | null> {
   const [h, p, sig] = token.split(".");
   if (!h || !p || !sig) return null;
   const header = JSON.parse(Buffer.from(h, "base64url").toString()) as { alg?: string; kid?: string };
@@ -34,17 +33,17 @@ async function verifyIdToken(token: string, nonce: string): Promise<IdClaims | n
   if (!verifySignature("RSA-SHA256", Buffer.from(`${h}.${p}`), key, Buffer.from(sig, "base64url"))) return null;
   const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as IdClaims;
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (claims.iss !== issuer() || !aud.includes(clientId())) return null;
+  if (claims.iss !== issuer() || !aud.includes(clientId)) return null;
   if (!claims.exp || claims.exp * 1000 < Date.now() || claims.nonce !== nonce) return null;
   return claims;
 }
 
 /** Aegis's end_session URL; client_id identifies the app, so no id_token has to be kept. */
-export function aegisLogoutUrl(): string {
+export function aegisLogoutUrl(site: Site): string {
   const url = new URL(`${issuer()}/session/end`);
   url.search = new URLSearchParams({
-    client_id: clientId(),
-    post_logout_redirect_uri: `${appUrl()}/`,
+    client_id: site.clientId,
+    post_logout_redirect_uri: `${site.appUrl}/`,
   }).toString();
   return url.toString();
 }
@@ -59,18 +58,20 @@ export class AuthController {
 
   @Get("auth/login")
   login(@Req() req: Request, @Res() res: Response) {
+    const site = siteFor(req);
     const verifier = randomToken();
     const saved: OidcState = {
       state: randomToken(),
       verifier,
       nonce: randomToken(),
       returnTo: safeReturn(req.query.returnTo),
+      clientId: site.clientId,
       exp: Date.now() + 10 * 60_000,
     };
     const url = new URL(`${issuer()}/authorize`);
     url.search = new URLSearchParams({
-      client_id: clientId(),
-      redirect_uri: redirectUri(),
+      client_id: site.clientId,
+      redirect_uri: redirectUri(site),
       response_type: "code",
       // "mailbox": Aegis adds mailbox_domain for a blank account that may claim a hosted mailbox.
       scope: "openid email profile mailbox",
@@ -85,9 +86,10 @@ export class AuthController {
 
   @Get("auth/callback")
   async callback(@Req() req: Request, @Res() res: Response) {
+    const site = siteFor(req);
     const saved = unseal<OidcState>(readCookie(req.headers.cookie, STATE_COOKIE));
     const code = typeof req.query.code === "string" ? req.query.code : "";
-    if (!saved || saved.state !== req.query.state || !code) {
+    if (!saved || saved.state !== req.query.state || saved.clientId !== site.clientId || !code) {
       return res.status(400).type("html").send(`<p>That sign-in expired. <a href="/auth/login">Try again</a>.</p>`);
     }
     const tokenResponse = await fetch(`${issuer()}/token`, {
@@ -96,9 +98,9 @@ export class AuthController {
       body: new URLSearchParams({
         grant_type: "authorization_code",
         code,
-        redirect_uri: redirectUri(),
-        client_id: clientId(),
-        client_secret: process.env.AEGIS_CLIENT_SECRET ?? "",
+        redirect_uri: redirectUri(site),
+        client_id: site.clientId,
+        client_secret: site.clientSecret,
         code_verifier: saved.verifier,
       }),
     });
@@ -106,7 +108,7 @@ export class AuthController {
       return res.status(502).type("html").send(`<p>Aegis didn't accept the sign-in. <a href="/auth/login">Try again</a>.</p>`);
     }
     const tokens = (await tokenResponse.json()) as { id_token?: string };
-    const claims = tokens.id_token ? await verifyIdToken(tokens.id_token, saved.nonce) : null;
+    const claims = tokens.id_token ? await verifyIdToken(tokens.id_token, saved.nonce, site.clientId) : null;
     if (!claims?.sub || !claims.email || claims.email_verified !== true) {
       return res.status(403).type("html").send(`<p>Your Aegis account needs a verified email. <a href="/auth/login">Try again</a>.</p>`);
     }
@@ -130,12 +132,12 @@ export class AuthController {
    * Ends the Missive session *and* the Aegis one (OIDC RP-initiated logout).
    * Clearing only our cookie left the person signed in at Aegis, so the next
    * "Sign in" went straight back in without asking. Aegis confirms, then
-   * returns to APP_URL/, which must be a registered post-logout URI.
+   * returns to the site's address, which must be a registered post-logout URI.
    */
   @Get("auth/logout")
-  logout(@Res() res: Response) {
+  logout(@Req() req: Request, @Res() res: Response) {
     res.setHeader("set-cookie", cookie(SESSION_COOKIE, "", 0));
-    res.redirect(302, aegisLogoutUrl());
+    res.redirect(302, aegisLogoutUrl(siteFor(req)));
   }
 
   /** Who is signed in, and the hosted mailboxes they can read and send from. */
