@@ -5,6 +5,8 @@ import { UsersService } from "./users.service";
 import { runAsUser } from "./request-context";
 import { dataCipher } from "./data-cipher";
 import { safeError } from "./log-safe";
+import { addressIndex, normalizeAddress, sealIdentity } from "./identity-crypto";
+import { ConnectorStore } from "./connector.store";
 import { ENCRYPTED_COLUMNS, type EncryptedTable } from "./storage/content-crypto";
 
 /**
@@ -28,7 +30,12 @@ export class EncryptionBackfillService implements OnApplicationBootstrap {
   async onApplicationBootstrap() {
     // Fails startup if MISSIVE_DATA_KEY is missing, before any request is served.
     dataCipher();
+    // Identity first: sign-in matches users by blind index, so every user must
+    // have one before the first request.
+    await this.identities();
     await this.connectors();
+    await this.connectorIds();
+    await this.hostedMessageIds();
     // Mail content can be large: encrypt it in the background so startup (and
     // the container's health check) isn't held up. Reads handle both
     // encrypted and not-yet-encrypted rows meanwhile.
@@ -44,7 +51,7 @@ export class EncryptionBackfillService implements OnApplicationBootstrap {
    */
   private async content(table: EncryptedTable) {
     const columns = ENCRYPTED_COLUMNS[table];
-    const isJson = (c: string) => c === "recipients" || c === "items";
+    const isJson = (c: string) => c === "recipients" || c === "items" || c === "conditions";
     // A column still needs work if it's a JSON object/array, or text without the prefix.
     const pending = columns
       .map((c) => (isJson(c)
@@ -83,6 +90,79 @@ export class EncryptionBackfillService implements OnApplicationBootstrap {
 
   private sealFor(userId: string, table: string, column: string, value: string): Promise<string> {
     return dataCipher().encrypt(userScope(userId), `${table}.${column}`, value);
+  }
+
+  /** users.email/name and mailboxes.address/display_name: encrypted, with blind indexes. */
+  private async identities() {
+    const users = await this.pg.systemQuery(`SELECT id, email, name FROM users WHERE email_bidx IS NULL`);
+    for (const u of users.rows) {
+      const email = normalizeAddress(u.email);
+      await this.pg.systemQuery(
+        `UPDATE users SET email = $2, email_bidx = $3, name = $4 WHERE id = $1 AND email_bidx IS NULL`,
+        [u.id, await sealIdentity("users.email", email), await addressIndex("users.email", email),
+         u.name == null || String(u.name).startsWith("mv1.") ? u.name : await sealIdentity("users.name", u.name)],
+      );
+    }
+    const boxes = await this.pg.systemQuery(`SELECT address, display_name FROM mailboxes WHERE address_bidx IS NULL`);
+    for (const m of boxes.rows) {
+      const address = normalizeAddress(m.address);
+      await this.pg.systemQuery(
+        `UPDATE mailboxes SET address = $2, address_bidx = $3, display_name = $4 WHERE address = $1 AND address_bidx IS NULL`,
+        [m.address, await sealIdentity("mailboxes.address", address), await addressIndex("mailboxes.address", address),
+         m.display_name == null ? null : await sealIdentity("mailboxes.display_name", m.display_name)],
+      );
+    }
+    if (users.rows.length || boxes.rows.length) this.log.log(`identities: encrypted ${users.rows.length} user(s), ${boxes.rows.length} mailbox(es)`);
+  }
+
+  /**
+   * Connector ids used to be "<provider>:<email>". They become
+   * "<provider>:<blind index>", with email and label encrypted. The primary
+   * key can't be updated in place while sync_logs may reference it, so the
+   * row is copied under the new id, references moved, then the old row removed.
+   */
+  private async connectorIds() {
+    let moved = 0;
+    for (const user of await this.users.all()) {
+      moved += await runAsUser(user, async () => {
+        const { rows } = await this.pg.query(`SELECT id, provider, email, label FROM connectors WHERE email NOT LIKE 'mv1.%'`);
+        for (const r of rows) {
+          const newId = await ConnectorStore.idFor(r.provider, r.email);
+          const email = await dataCipher().encrypt(userScope(user.id), "connectors.email", r.email);
+          const label = await dataCipher().encrypt(userScope(user.id), "connectors.label", r.label ?? r.email);
+          await this.pg.query(
+            `INSERT INTO connectors (id, provider, label, email, enabled, credentials, settings, last_sync_at, status, created_at, updated_at, owner_id)
+             SELECT $2, provider, $3, $4, enabled, credentials, settings, last_sync_at, status, created_at, NOW(), owner_id
+               FROM connectors WHERE id = $1
+             ON CONFLICT (id) DO NOTHING`,
+            [r.id, newId, label, email],
+          );
+          await this.pg.query(`UPDATE sync_logs SET connector_id = $2 WHERE connector_id = $1`, [r.id, newId]);
+          if (newId !== r.id) await this.pg.query(`DELETE FROM connectors WHERE id = $1`, [r.id]);
+        }
+        return rows.length;
+      });
+    }
+    if (moved) this.log.log(`connectors: re-keyed ${moved} connector id(s)`);
+  }
+
+  /** Hosted mail's provider_message_id was "<mailbox address>:<Message-ID>"; the prefix becomes the mailbox's blind index. */
+  private async hostedMessageIds() {
+    let done = 0;
+    for (const user of await this.users.all()) {
+      done += await runAsUser(user, async () => {
+        const { rows } = await this.pg.query(
+          `SELECT id, provider_message_id FROM missives WHERE provider = 'missive' AND split_part(provider_message_id, ':', 1) LIKE '%@%'`,
+        );
+        for (const r of rows) {
+          const cut = r.provider_message_id.indexOf(":");
+          const next = `${await addressIndex("mailboxes.address", r.provider_message_id.slice(0, cut))}${r.provider_message_id.slice(cut)}`;
+          await this.pg.query(`UPDATE missives SET provider_message_id = $2 WHERE id = $1`, [r.id, next]);
+        }
+        return rows.length;
+      });
+    }
+    if (done) this.log.log(`missives: re-keyed ${done} hosted message id(s)`);
   }
 
   /** OAuth tokens and IMAP passwords: JSONB object -> encrypted JSON string. */
