@@ -38,6 +38,11 @@ async function verifyIdToken(token: string, nonce: string, clientId: string): Pr
   return claims;
 }
 
+/** The person's Aegis account page (password, passkeys, two-step sign-in) in this site's tenant. */
+export function aegisAccountUrl(site: Site): string {
+  return `${issuer()}/account?client_id=${encodeURIComponent(site.clientId)}`;
+}
+
 /** Aegis's end_session URL; client_id identifies the app, so no id_token has to be kept. */
 export function aegisLogoutUrl(site: Site): string {
   const url = new URL(`${issuer()}/session/end`);
@@ -151,9 +156,14 @@ export class AuthController {
 
   /** Who is signed in, and the hosted mailboxes they can read and send from. */
   @Get("api/v1/me")
-  async me() {
+  async me(@Req() req: Request) {
     const user = requireUser();
     const [mailboxes, offerDomain] = await Promise.all([this.users.mailboxesOf(user.id), this.users.mailboxOffer(user.id)]);
-    return { id: user.id, email: user.email, name: user.name, mailboxes, mailboxOffer: offerDomain ? { domain: offerDomain } : null };
+    return {
+      id: user.id, email: user.email, name: user.name, mailboxes, mailboxOffer: offerDomain ? { domain: offerDomain } : null,
+      // Password, passkeys and two-step sign-in live in Aegis (a passkey has to
+      // be registered on Aegis's own origin); client_id picks this site's tenant.
+      accountUrl: aegisAccountUrl(siteFor(req)),
+    };
   }
 }
