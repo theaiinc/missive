@@ -12,6 +12,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useOrganizerStatus } from "@/hooks/useOrganizerStatus";
 import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
 import { useMe } from "@/hooks/useMe";
+import { ClaimMailbox } from "@/components/ClaimMailbox";
 import { ComposeProvider, useCompose } from "./Compose";
 
 const folderIcons: Record<string, React.ElementType> = {
@@ -235,7 +236,8 @@ function LayoutShell() {
           </div>
         )}
         <div className="flex-1 overflow-hidden">
-          <Outlet />
+          {/* A blank account's first visit: pick the hosted mailbox address first. */}
+          {me?.mailboxOffer ? <ClaimMailbox domain={me.mailboxOffer.domain} /> : <Outlet />}
         </div>
       </main>
 
