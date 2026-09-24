@@ -20,6 +20,11 @@ export class RuleService {
     return rows.map(rowToRule);
   }
 
+  /** Clear rules_evaluated_at on all missives so they are re-evaluated against changed rules. */
+  private async resetEvaluations(): Promise<void> {
+    await this.pg.query("UPDATE missives SET rules_evaluated_at = NULL WHERE rules_evaluated_at IS NOT NULL");
+  }
+
   async get(id: string): Promise<Rule | null> {
     const { rows } = await this.pg.query(
       "SELECT * FROM rules WHERE id = $1",
@@ -51,6 +56,7 @@ export class RuleService {
         data.priority ?? 0,
       ]
     );
+    await this.resetEvaluations();
     return rowToRule(rows[0]);
   }
 
@@ -96,11 +102,13 @@ export class RuleService {
       `UPDATE rules SET ${sets.join(", ")} WHERE id = $${idx} RETURNING *`,
       params
     );
+    await this.resetEvaluations();
     return rows.length > 0 ? rowToRule(rows[0]) : null;
   }
 
   async remove(id: string): Promise<void> {
     await this.pg.query("DELETE FROM rules WHERE id = $1", [id]);
+    await this.resetEvaluations();
   }
 
   // ── Evaluation ──
@@ -108,6 +116,7 @@ export class RuleService {
   /**
    * Evaluate all enabled rules against a missive.
    * Returns the actions from the highest-priority matching rule.
+   * Marks the missive as evaluated so it won't be picked up again.
    */
   async evaluate(missive: Missive): Promise<RuleAction[]> {
     const rules = await this.list();
@@ -120,9 +129,20 @@ export class RuleService {
           `UPDATE rules SET applied_count = applied_count + 1, last_applied_at = NOW() WHERE id = $1`,
           [rule.id]
         );
+        // Mark missive as evaluated
+        await this.pg.query(
+          "UPDATE missives SET rules_evaluated_at = NOW() WHERE id = $1",
+          [missive.id]
+        );
         return rule.actions;
       }
     }
+
+    // No rule matched — still mark as evaluated to avoid re-scanning
+    await this.pg.query(
+      "UPDATE missives SET rules_evaluated_at = NOW() WHERE id = $1",
+      [missive.id]
+    );
 
     return [];
   }
@@ -147,6 +167,38 @@ export class RuleService {
     }
 
     return { applied, total: missives.length };
+  }
+
+  /**
+   * Evaluate all enabled rules against missives that haven't been evaluated
+   * yet, or missives that were updated since their last evaluation
+   * (e.g. after classification was set). Used by SyncScheduler for periodic
+   * auto-evaluation so rules based on classification fields are applied
+   * retroactively after the OrganizerService processes them.
+   */
+  async evaluatePending(limit = 50): Promise<{ applied: number; evaluated: number }> {
+    const { rows } = await this.pg.query(
+      `SELECT * FROM missives
+       WHERE rules_evaluated_at IS NULL
+          OR rules_evaluated_at < updated_at
+       ORDER BY rules_evaluated_at NULLS FIRST, received_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    if (rows.length === 0) return { applied: 0, evaluated: 0 };
+
+    const missives = rows.map(rowToSimpleMissive);
+    let applied = 0;
+
+    for (const missive of missives) {
+      const actions = await this.evaluate(missive);
+      if (actions.length > 0) {
+        await this.applyActions(missive.id, actions);
+        applied++;
+      }
+    }
+
+    return { applied, evaluated: missives.length };
   }
 
   /**

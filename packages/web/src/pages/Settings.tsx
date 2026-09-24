@@ -7,6 +7,8 @@ import { Separator } from "@/components/ui/separator";
 import { useEffect, useState } from "react";
 import { RefreshCw, Trash2, Plus, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAccountColors, colorOptions } from "@/hooks/useAccountColors";
+import { useEntityConfig, ConfigItem } from "@/hooks/useEntityConfig";
 
 interface AccountInfo {
   id: string;
@@ -70,6 +72,10 @@ function AccountCard({
   onDisconnect: () => void;
   syncing: boolean;
 }) {
+  const { getColor, setColor } = useAccountColors();
+  const [showColors, setShowColors] = useState(false);
+  const color = getColor(account.email);
+
   return (
     <Card className="flex items-center justify-between p-4">
       <div className="flex items-center gap-3 min-w-0">
@@ -91,6 +97,35 @@ function AccountCard({
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+        {/* Color picker */}
+        <div className="relative">
+          <button
+            onClick={() => setShowColors(!showColors)}
+            className={`w-8 h-8 rounded-lg ${color.swatch} border-2 border-border hover:ring-2 hover:ring-primary/40 transition-all`}
+            title="Change badge color"
+          />
+          {showColors && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowColors(false)} />
+              <div className="absolute right-0 top-full mt-2 z-50 bg-popover border border-border rounded-xl shadow-xl p-3 w-[216px]">
+                <p className="text-[11px] font-medium text-muted-foreground mb-2.5">Badge color</p>
+                <div className="flex flex-wrap gap-2.5">
+                  {colorOptions.map((opt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setColor(account.email, i); setShowColors(false); }}
+                      className={`w-10 h-10 rounded-lg ${opt.swatch} border-2 hover:ring-2 hover:ring-primary/40 transition-all ${
+                        getColor(account.email).label === opt.label ? "ring-2 ring-primary border-white dark:border-zinc-900" : "border-border"
+                      }`}
+                      title={opt.label}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
         <Button
           variant="outline"
           size="sm"
@@ -129,6 +164,10 @@ function ImapAccountCard({
   onDisconnect: () => void;
   syncing: boolean;
 }) {
+  const { getColor, setColor } = useAccountColors();
+  const [showColors, setShowColors] = useState(false);
+  const color = getColor(account.email);
+
   return (
     <Card className="flex items-center justify-between p-4">
       <div className="flex items-center gap-3 min-w-0">
@@ -150,6 +189,35 @@ function ImapAccountCard({
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+        {/* Color picker */}
+        <div className="relative">
+          <button
+            onClick={() => setShowColors(!showColors)}
+            className={`w-8 h-8 rounded-lg ${color.swatch} border-2 border-border hover:ring-2 hover:ring-primary/40 transition-all`}
+            title="Change badge color"
+          />
+          {showColors && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowColors(false)} />
+              <div className="absolute right-0 top-full mt-2 z-50 bg-popover border border-border rounded-xl shadow-xl p-3 w-[216px]">
+                <p className="text-[11px] font-medium text-muted-foreground mb-2.5">Badge color</p>
+                <div className="flex flex-wrap gap-2.5">
+                  {colorOptions.map((opt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setColor(account.email, i); setShowColors(false); }}
+                      className={`w-10 h-10 rounded-lg ${opt.swatch} border-2 hover:ring-2 hover:ring-primary/40 transition-all ${
+                        getColor(account.email).label === opt.label ? "ring-2 ring-primary border-white dark:border-zinc-900" : "border-border"
+                      }`}
+                      title={opt.label}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
         <Button
           variant="outline"
           size="sm"
@@ -635,6 +703,141 @@ function ImapSection({
   );
 }
 
+function ConfigSection({
+  title,
+  badge,
+  items,
+  onAdd,
+  onRemove,
+  onRename,
+  onSetColor,
+  icon,
+}: {
+  title: string;
+  badge: string;
+  items: ConfigItem[];
+  onAdd: (name: string) => void;
+  onRemove: (name: string) => void;
+  onRename: (oldName: string, newName: string) => void;
+  onSetColor: (name: string, colorIndex: number) => void;
+  icon: string;
+}) {
+  const [newName, setNewName] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [colorPicker, setColorPicker] = useState<string | null>(null);
+
+  const handleAdd = () => {
+    if (!newName.trim()) return;
+    onAdd(newName.trim());
+    setNewName("");
+  };
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        <Badge variant="secondary" className="text-[10px]">{badge}</Badge>
+      </div>
+
+      <Card className="p-4">
+        {/* Add new */}
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
+            placeholder={`New ${title.toLowerCase().slice(0, -1)} name...`}
+            className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary"
+          />
+          <Button variant="outline" size="sm" onClick={handleAdd} disabled={!newName.trim()}>
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            Add
+          </Button>
+        </div>
+
+        {items.length === 0 && (
+          <p className="text-xs text-muted-foreground px-1">
+            No {title.toLowerCase()} configured yet.
+          </p>
+        )}
+
+        {/* Item list */}
+        <div className="space-y-1.5">
+          {items.map((item) => (
+            <div
+              key={item.name}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/20"
+            >
+              {/* Color picker */}
+              <div className="relative">
+                <button
+                  onClick={() => setColorPicker(colorPicker === item.name ? null : item.name)}
+                  className={`w-6 h-6 rounded-md ${colorOptions[item.colorIndex].swatch} border border-border hover:ring-2 hover:ring-primary/40 transition-all shrink-0`}
+                  title="Change color"
+                />
+                {colorPicker === item.name && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setColorPicker(null)} />
+                    <div className="absolute left-0 top-full mt-1.5 z-50 bg-popover border border-border rounded-xl shadow-xl p-2.5 w-[180px]">
+                      <div className="flex flex-wrap gap-1.5">
+                        {colorOptions.map((opt, i) => (
+                          <button
+                            key={i}
+                            onClick={() => { onSetColor(item.name, i); setColorPicker(null); }}
+                            className={`w-7 h-7 rounded-md ${opt.swatch} border hover:ring-2 hover:ring-primary/40 transition-all ${
+                              item.colorIndex === i ? "ring-2 ring-primary" : "border-border"
+                            }`}
+                            title={opt.label}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Name (editable inline) */}
+              {editing === item.name ? (
+                <input
+                  autoFocus
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && editValue.trim()) {
+                      onRename(item.name, editValue.trim());
+                      setEditing(null);
+                    }
+                    if (e.key === "Escape") setEditing(null);
+                  }}
+                  onBlur={() => setEditing(null)}
+                  className="flex-1 bg-background border border-border rounded px-2 py-0.5 text-sm outline-none focus:ring-1 focus:ring-primary"
+                />
+              ) : (
+                <span
+                  className="flex-1 text-sm text-foreground cursor-pointer hover:text-primary"
+                  onClick={() => { setEditing(item.name); setEditValue(item.name); }}
+                  title="Click to rename"
+                >
+                  {item.name}
+                </span>
+              )}
+
+              <button
+                onClick={() => onRemove(item.name)}
+                className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                title="Remove"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </section>
+  );
+}
+
 export function Settings() {
   const [searchParams] = useSearchParams();
 
@@ -710,6 +913,9 @@ export function Settings() {
     },
     onSettled: () => setImapConnecting(false),
   });
+
+  const organizations = useEntityConfig("missive_managed_organizations");
+  const projects = useEntityConfig("missive_managed_projects");
 
   // Handle OAuth callback result
   useEffect(() => {
@@ -793,6 +999,34 @@ export function Settings() {
             />
           </div>
         </section>
+
+        <Separator />
+
+        {/* Organizations */}
+        <ConfigSection
+          title="Organizations"
+          badge="Entity"
+          items={organizations.items}
+          onAdd={organizations.addItem}
+          onRemove={organizations.removeItem}
+          onRename={organizations.renameItem}
+          onSetColor={organizations.setColor}
+          icon="org"
+        />
+
+        <div className="py-2" />
+
+        {/* Projects */}
+        <ConfigSection
+          title="Projects"
+          badge="Entity"
+          items={projects.items}
+          onAdd={projects.addItem}
+          onRemove={projects.removeItem}
+          onRename={projects.renameItem}
+          onSetColor={projects.setColor}
+          icon="project"
+        />
 
         <Separator />
 

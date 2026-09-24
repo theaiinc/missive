@@ -1,10 +1,18 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive, Thread, EntityReference } from "@theaiinc/missive-core";
 import { StorageService } from "./storage/storage.service";
 
+export interface MoveResult {
+  moved: number;
+  autoMoved: number;
+  autoMovedIds: string[];
+}
+
 @Injectable()
 export class MissiveService {
+  private readonly logger = new Logger(MissiveService.name);
+
   constructor(
     private readonly storage: StorageService,
     private readonly eventEmitter: EventEmitter2
@@ -27,26 +35,94 @@ export class MissiveService {
   }
 
   async summarize(threadId: string): Promise<string> {
-    // Will delegate to AI service
     return "[summary placeholder]";
   }
 
   async classify(missiveId: string): Promise<string> {
-    // Will delegate to AI service
     const classification = "unclassified";
-
-    // Auto-move to folder based on classification
     const folder = classificationToFolder(classification);
     if (folder) {
       await this.storage.moveMissive(missiveId, folder);
     }
-
     return classification;
   }
 
   async extractEntities(missiveId: string): Promise<EntityReference[]> {
-    // Will delegate to AI service
     return [];
+  }
+
+  async moveMissive(id: string, folder: string): Promise<MoveResult> {
+    const missive = await this.storage.getMissive(id);
+    if (!missive) return { moved: 0, autoMoved: 0, autoMovedIds: [] };
+
+    const sourceFolder = missive.folder ?? "inbox";
+    await this.storage.moveMissive(id, folder);
+
+    // Learn from this manual move — find similar missives still in the source folder
+    const autoMovedIds = await this.autoMoveSimilar(missive, sourceFolder, folder);
+
+    if (autoMovedIds.length > 0) {
+      this.logger.log(
+        `Manual move of ${id} → ${folder} triggered auto-move of ${autoMovedIds.length} similar message(s)`
+      );
+    }
+
+    return {
+      moved: 1,
+      autoMoved: autoMovedIds.length,
+      autoMovedIds,
+    };
+  }
+
+  async moveThread(threadId: string, folder: string): Promise<MoveResult> {
+    const missives = await this.storage.getThreadMissives(threadId);
+    if (missives.length === 0) return { moved: 0, autoMoved: 0, autoMovedIds: [] };
+
+    const sourceFolder = missives[0]!.folder ?? "inbox";
+    await this.storage.moveThread(threadId, folder);
+
+    // Learn from the first message in the thread
+    const autoMovedIds = await this.autoMoveSimilar(missives[0]!, sourceFolder, folder);
+
+    if (autoMovedIds.length > 0) {
+      this.logger.log(
+        `Manual thread move ${threadId} → ${folder} triggered auto-move of ${autoMovedIds.length} similar message(s)`
+      );
+    }
+
+    return {
+      moved: missives.length,
+      autoMoved: autoMovedIds.length,
+      autoMovedIds,
+    };
+  }
+
+  /**
+   * Find missives with the same sender domain in the source folder and move them.
+   * Returns the IDs of auto-moved missives.
+   */
+  private async autoMoveSimilar(
+    reference: Missive,
+    sourceFolder: string,
+    targetFolder: string
+  ): Promise<string[]> {
+    if (sourceFolder === targetFolder) return [];
+
+    const senderDomain = reference.from.address?.split("@")[1];
+    if (!senderDomain) return [];
+
+    const rows = await this.storage.findMissivesBySenderDomain(
+      senderDomain,
+      sourceFolder,
+      reference.id
+    );
+
+    if (rows.length === 0) return [];
+
+    const ids = rows.map((r: any) => r.id);
+    await this.storage.batchMoveMissives(ids, targetFolder);
+
+    return ids;
   }
 }
 

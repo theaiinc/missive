@@ -49,7 +49,7 @@ export class SyncService {
 
         const listRes = await gmail.users.messages.list({
           userId: "me",
-          maxResults: 10,
+          maxResults: 50,
           q: "in:inbox",
         });
 

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { MessageCircle, X, Send, Bot, User, Loader2, Check, XCircle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useChat } from "@/hooks/useChat";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -18,23 +19,8 @@ interface RuleProposal {
   clarification?: string;
 }
 
-function Markdown({ content }: { content: string }) {
-  const html = content
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, "<code class='bg-muted px-1 rounded text-xs'>$1</code>")
-    .replace(/^## (.+)$/gm, "<strong class='text-sm'>$1</strong>")
-    .replace(/\n/g, "<br>");
-
-  return (
-    <span
-      className="text-sm leading-relaxed [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
-}
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 function RuleCard({
   proposal,
@@ -106,7 +92,7 @@ function RuleCard({
 }
 
 export function ChatWidget() {
-  const [open, setOpen] = useState(false);
+  const { open, openChat, closeChat, systemMessages, unreadSystemCount } = useChat();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -223,6 +209,8 @@ export function ChatWidget() {
 
       const decoder = new TextDecoder();
       let fullContent = "";
+      let toolCleanedContent: string | null = null;
+      let toolResults: any[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -242,6 +230,14 @@ export function ChatWidget() {
               fullContent += parsed.content;
               setStreamContent(fullContent);
             }
+            if (parsed.toolCleaned) {
+              // Backend cleaned out tool call lines — use this instead
+              toolCleanedContent = parsed.toolCleaned;
+              setStreamContent(toolCleanedContent);
+            }
+            if (parsed.toolResult) {
+              toolResults.push(parsed.toolResult);
+            }
             if (parsed.error) {
               fullContent += `\n\n⚠️ ${parsed.error}`;
               setStreamContent(fullContent);
@@ -252,9 +248,22 @@ export function ChatWidget() {
         }
       }
 
+      // Use cleaned content if available, otherwise full streamed content
+      const finalContent = toolCleanedContent ?? fullContent;
+
+      // Append tool result messages
+      let finalDisplay = finalContent;
+      for (const tr of toolResults) {
+        if (tr.success) {
+          finalDisplay += `\n\n✅ ${tr.message}`;
+        } else {
+          finalDisplay += `\n\n❌ ${tr.message}`;
+        }
+      }
+
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: fullContent },
+        { role: "assistant", content: finalDisplay },
       ]);
       setStreamContent("");
     } catch (err: any) {
@@ -354,18 +363,24 @@ export function ChatWidget() {
     <>
       {/* Toggle button */}
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => open ? closeChat() : openChat()}
         className={cn(
           "fixed bottom-5 right-5 z-50 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all duration-200",
           open
             ? "bg-muted-foreground hover:bg-foreground scale-90"
-            : "bg-primary hover:bg-primary/90 scale-100"
+            : "bg-primary hover:bg-primary/90 scale-100",
+          !open && unreadSystemCount > 0 && "animate-pulse"
         )}
       >
         {open ? (
           <X className="w-5 h-5 text-background" />
         ) : (
           <MessageCircle className="w-5 h-5 text-primary-foreground" />
+        )}
+        {!open && unreadSystemCount > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center animate-bounce">
+            {unreadSystemCount > 9 ? "9+" : unreadSystemCount}
+          </span>
         )}
       </button>
 
@@ -392,7 +407,7 @@ export function ChatWidget() {
             ref={listRef}
             className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
           >
-            {messages.length === 0 && !streaming && !rulePending && (
+            {messages.length === 0 && !streaming && !rulePending && systemMessages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <Bot className="w-8 h-8 mb-2 opacity-40" />
                 <p className="text-sm text-center max-w-[200px]">
@@ -400,6 +415,26 @@ export function ChatWidget() {
                 </p>
               </div>
             )}
+
+            {/* System event messages — cap at 20 most recent */}
+            {systemMessages.slice(-20).map((msg, i) => {
+              const isMerged = msg.count && msg.count > 1;
+              return (
+                <div key={`sys-${i}`} className="flex gap-2.5 justify-start opacity-80">
+                  <div className="w-6 h-6 rounded-full bg-primary/60 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot className="w-3.5 h-3.5 text-primary-foreground" />
+                  </div>
+                  <div className="max-w-[80%] rounded-2xl rounded-tl-sm px-3.5 py-2 bg-primary/5 border border-primary/10 text-foreground text-xs leading-relaxed relative">
+                    <Markdown>{msg.content}</Markdown>
+                    {isMerged && (
+                      <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] rounded-full bg-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground px-1">
+                        {msg.count === 10 ? "9+" : msg.count}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
 
             {messages.map((msg, i) => (
               <div key={i} className="space-y-2">
@@ -416,13 +451,15 @@ export function ChatWidget() {
                   )}
                   <div
                     className={cn(
-                      "max-w-[80%] rounded-2xl px-3.5 py-2",
+                      "max-w-[80%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed",
                       msg.role === "user"
                         ? "bg-primary text-primary-foreground rounded-tr-sm"
                         : "bg-muted text-foreground rounded-tl-sm"
                     )}
                   >
-                    <Markdown content={msg.content} />
+                    <div className="[&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs">
+                      <Markdown>{msg.content}</Markdown>
+                    </div>
                   </div>
                   {msg.role === "user" && (
                     <div className="w-6 h-6 rounded-full bg-muted-foreground flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -452,7 +489,9 @@ export function ChatWidget() {
                 <div className="max-w-[80%] rounded-2xl rounded-tl-sm px-3.5 py-2 bg-muted text-foreground">
                   {streamContent ? (
                     <>
-                      <Markdown content={streamContent} />
+                      <div className="[&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs">
+                        <Markdown>{streamContent}</Markdown>
+                      </div>
                       <span className="inline-block w-1.5 h-4 bg-primary/60 ml-0.5 animate-pulse" />
                     </>
                   ) : (

@@ -15,12 +15,14 @@ import { SyncScheduler } from "./sync-scheduler";
 import { ConnectorStore } from "./connector.store";
 import { OrganizerService } from "./organizer.service";
 import { DigestController } from "./digest.controller";
+import { SystemEventService } from "./system-event.service";
+import { SystemEventController } from "./system-event.controller";
 import { StorageModule } from "./storage/storage.module";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController],
-  providers: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService],
-  exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService],
+  controllers: [MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController],
+  providers: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService],
+  exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule {}

@@ -151,6 +151,16 @@ export class StorageService {
       params.push(query.before);
       idx++;
     }
+    if (query.organization) {
+      conditions.push(`$${idx} = ANY(organizations)`);
+      params.push(query.organization);
+      idx++;
+    }
+    if (query.project) {
+      conditions.push(`$${idx} = ANY(projects)`);
+      params.push(query.project);
+      idx++;
+    }
 
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -215,11 +225,111 @@ export class StorageService {
     );
   }
 
+  async classifyMissive(id: string, classification: string): Promise<void> {
+    const folder = classificationToFolder(classification);
+    if (folder) {
+      await this.pg.query(
+        'UPDATE missives SET classification = $1, folder = $2, updated_at = NOW() WHERE id = $3',
+        [classification, folder, id],
+      );
+    } else {
+      await this.pg.query(
+        'UPDATE missives SET classification = $1, updated_at = NOW() WHERE id = $2',
+        [classification, id],
+      );
+    }
+  }
+
+  async classifyThread(threadId: string, classification: string): Promise<void> {
+    const folder = classificationToFolder(classification);
+    if (folder) {
+      await this.pg.query(
+        'UPDATE missives SET classification = $1, folder = $2, updated_at = NOW() WHERE thread_id = $3',
+        [classification, folder, threadId],
+      );
+    } else {
+      await this.pg.query(
+        'UPDATE missives SET classification = $1, updated_at = NOW() WHERE thread_id = $2',
+        [classification, threadId],
+      );
+    }
+  }
+
   async moveThread(threadId: string, folder: string): Promise<void> {
     await this.pg.query(
       'UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2',
       [folder, threadId],
     );
+  }
+
+  /** Find other missives with the same sender domain currently in `folder`. */
+  async findMissivesBySenderDomain(
+    domain: string,
+    folder: string,
+    excludeId: string,
+    limit = 20,
+  ): Promise<{ id: string }[]> {
+    const { rows } = await this.pg.query(
+      `SELECT id FROM missives WHERE folder = $1 AND sender_address ILIKE $2 AND id <> $3 LIMIT $4`,
+      [folder, `%@${domain}`, excludeId, limit],
+    );
+    return rows;
+  }
+
+  /** Move multiple missives to a folder in one query. */
+  async batchMoveMissives(ids: string[], folder: string): Promise<void> {
+    await this.pg.query(
+      `UPDATE missives SET folder = $1, updated_at = NOW() WHERE id = ANY($2::text[])`,
+      [folder, ids],
+    );
+  }
+
+  // ── Organizations ──
+
+  async setMissiveOrganizations(id: string, organizations: string[]): Promise<void> {
+    await this.pg.query(
+      'UPDATE missives SET organizations = $1, updated_at = NOW() WHERE id = $2',
+      [organizations, id],
+    );
+  }
+
+  async setThreadOrganizations(threadId: string, organizations: string[]): Promise<void> {
+    await this.pg.query(
+      'UPDATE missives SET organizations = $1, updated_at = NOW() WHERE thread_id = $2',
+      [organizations, threadId],
+    );
+  }
+
+  /** List all distinct organizations across all missives. */
+  async listOrganizations(): Promise<string[]> {
+    const { rows } = await this.pg.query(
+      "SELECT DISTINCT unnest(organizations) AS org FROM missives WHERE organizations != '{}' ORDER BY org"
+    );
+    return rows.map((r: any) => r.org);
+  }
+
+  // ── Projects ──
+
+  async setMissiveProjects(id: string, projects: string[]): Promise<void> {
+    await this.pg.query(
+      'UPDATE missives SET projects = $1, updated_at = NOW() WHERE id = $2',
+      [projects, id],
+    );
+  }
+
+  async setThreadProjects(threadId: string, projects: string[]): Promise<void> {
+    await this.pg.query(
+      'UPDATE missives SET projects = $1, updated_at = NOW() WHERE thread_id = $2',
+      [projects, threadId],
+    );
+  }
+
+  /** List all distinct projects across all missives. */
+  async listProjects(): Promise<string[]> {
+    const { rows } = await this.pg.query(
+      "SELECT DISTINCT unnest(projects) AS proj FROM missives WHERE projects != '{}' ORDER BY proj"
+    );
+    return rows.map((r: any) => r.proj);
   }
 }
 
@@ -243,6 +353,8 @@ function rowToMissive(row: any): Missive {
     classification: row.classification ?? undefined,
     folder: row.folder ?? 'inbox',
     accountEmail: row.account_email ?? undefined,
+    organizations: row.organizations ?? undefined,
+    projects: row.projects ?? undefined,
     receivedAt: row.received_at.toISOString(),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -280,4 +392,20 @@ function rowToFolder(row: any): Folder & { missiveCount: number } {
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+function classificationToFolder(classification: string): string | null {
+  const map: Record<string, string> = {
+    invoice: "invoices",
+    complaint: "complaints",
+    lead: "leads",
+    support: "support",
+    personal: "personal",
+    notification: "inbox",
+    newsletter: "archived",
+    meeting: "archived",
+    spam: "archived",
+    other: "archived",
+  };
+  return map[classification?.toLowerCase()] ?? null;
 }

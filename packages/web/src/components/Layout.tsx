@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun } from "lucide-react";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -8,9 +8,9 @@ import type { Folder } from "@theaiinc/missive-core";
 import { useState } from "react";
 import { ChatWidget } from "./ChatWidget";
 import { Toaster } from "sonner";
-import { useNotifications } from "@/hooks/useNotifications";
-import { NotificationPanel } from "./NotificationPanel";
 import { useTheme } from "@/hooks/useTheme";
+import { useOrganizerStatus } from "@/hooks/useOrganizerStatus";
+import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
 
 const folderIcons: Record<string, React.ElementType> = {
   inbox: InboxIcon,
@@ -23,6 +23,7 @@ const folderIcons: Record<string, React.ElementType> = {
 };
 
 const navItems = [
+  { to: "/rules", label: "Rules", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -43,17 +44,9 @@ export function Layout() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
-  const {
-    notifications,
-    unreadCount,
-    digest,
-    digestLoaded,
-    markAllRead,
-    dismissNotification,
-    markRead,
-  } = useNotifications();
-
   const { theme, toggleTheme } = useTheme();
+  const organizerRunning = useOrganizerStatus();
+  useSystemEventPoller();
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
@@ -74,10 +67,10 @@ export function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar */}
-      <aside className="w-56 border-r border-border bg-card flex flex-col">
-        <div className="p-5">
+      <div className="flex h-screen bg-background">
+        {/* Sidebar */}
+        <aside className="w-56 border-r border-border bg-card flex flex-col">
+        <div className="px-5 py-4">
           <button
             onClick={() => navigate("/inbox")}
             className="flex items-center gap-2.5"
@@ -86,12 +79,9 @@ export function Layout() {
               <Mail className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-base font-semibold text-foreground">
+              <h1 className="text-sm font-semibold text-foreground">
                 Missive
               </h1>
-              <p className="text-[11px] text-muted-foreground leading-tight">
-                Communication Intelligence
-              </p>
             </div>
           </button>
         </div>
@@ -205,19 +195,13 @@ export function Layout() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-hidden flex flex-col">
-        {/* Top bar with notification bell */}
-        <div className="h-10 border-b border-border bg-card flex items-center justify-end px-4 flex-shrink-0">
-          <NotificationPanel
-            notifications={notifications}
-            unreadCount={unreadCount}
-            digest={digest}
-            digestLoaded={digestLoaded}
-            markAllRead={markAllRead}
-            dismissNotification={dismissNotification}
-            markRead={markRead}
-          />
-        </div>
+      <main className="flex-1 overflow-hidden flex flex-col relative">
+        {/* Organizer activity indicator */}
+        {organizerRunning && (
+          <div className="absolute top-0 left-0 right-0 z-50 h-[2px] overflow-hidden">
+            <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-primary to-transparent animate-pulse" />
+          </div>
+        )}
         <div className="flex-1 overflow-hidden">
           <Outlet />
         </div>

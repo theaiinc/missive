@@ -70,8 +70,10 @@ export function useNotifications() {
       const data: DigestInfo = await res.json();
       if (data?.id) {
         setDigest(data);
-        setDigestLoaded(true);
+      } else {
+        setDigest(null);
       }
+      setDigestLoaded(true);
     } catch {
       // Silently ignore
     }
@@ -184,7 +186,8 @@ export function useNotifications() {
   }, []);
 
   const markAllRead = useCallback(() => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setNotifications([]);
+    setLastSeen(new Date().toISOString());
     clearUnread();
   }, [clearUnread]);
 
@@ -193,9 +196,7 @@ export function useNotifications() {
   }, []);
 
   const markRead = useCallback((id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    );
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
   return {

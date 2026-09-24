@@ -1,8 +1,18 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import { StorageService } from "./storage/storage.service";
+import { RuleService } from "./rule.service";
+import { ConnectorStore } from "./connector.store";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+}
+
+interface ToolResult {
+  name: string;
+  success: boolean;
+  message: string;
+  data?: any;
 }
 
 @Injectable()
@@ -11,12 +21,342 @@ export class ChatService {
   private readonly model: string;
   private readonly timeoutMs: number;
 
-  constructor() {
+  constructor(
+    private readonly storage: StorageService,
+    private readonly rules: RuleService,
+    private readonly connectors: ConnectorStore
+  ) {
     this.baseUrl =
       process.env.LM_STUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1";
     this.model =
       process.env.LM_STUDIO_MODEL ?? "google/gemma-4-26b-a4b-qat";
     this.timeoutMs = parseInt(process.env.LM_STUDIO_TIMEOUT_MS ?? "120000", 10);
+  }
+
+  /** Available tool definitions for the AI. */
+  private getToolDefinitions(): string {
+    return `
+You have the ability to perform actions by invoking tools. To call a tool, include a line in your response with the following format:
+
+TOOL_CALL:createFolder({"name": "Folder Name", "slug": "folder-slug"})
+
+The slug should be a URL-friendly version of the name (lowercase, hyphens instead of spaces, no special chars).
+
+TOOL_CALL:classify({"missiveId": "missive-id", "classification": "invoice"})
+
+The classification must be one of: invoice, complaint, lead, support, personal, notification, newsletter, meeting, spam, other.
+
+TOOL_CALL:move({"missiveId": "missive-id", "folder": "folder-slug"})
+
+You can also move entire threads with TOOL_CALL:moveThread({"threadId": "thread-id", "folder": "folder-slug"})
+
+Available tools:
+
+1. createFolder — Create a new folder to organize messages
+   Parameters: { "name": string, "slug": string }
+
+2. classify — Set a classification label on a missive. This also automatically moves it to the correct folder based on the classification
+   Parameters: { "missiveId": string, "classification": string }
+
+3. move — Move a missive to a different folder
+   Parameters: { "missiveId": string, "folder": string }
+
+4. moveThread — Move an entire thread (all messages in it) to a different folder
+   Parameters: { "threadId": string, "folder": string }
+
+5. setOrganizations — Set the organization(s) a missive belongs to. Use an array even for a single org.
+   Parameters: { "missiveId": string, "organizations": string[] }
+
+6. setThreadOrganizations — Set the organization(s) for all messages in a thread.
+   Parameters: { "threadId": string, "organizations": string[] }
+
+7. setProjects — Set the project(s) a missive belongs to. Use an array even for a single project.
+   Parameters: { "missiveId": string, "projects": string[] }
+
+8. setThreadProjects — Set the project(s) for all messages in a thread.
+   Parameters: { "threadId": string, "projects": string[] }
+
+Only call tools when explicitly requested by the user. When you call a tool, include both your explanation AND the TOOL_CALL line in your response.`;
+  }
+
+  /** Execute a tool call and return the result. */
+  private async executeTool(toolName: string, args: any): Promise<ToolResult> {
+    switch (toolName) {
+      case "createFolder": {
+        if (!args.name || !args.slug) {
+          return { name: toolName, success: false, message: "name and slug are required" };
+        }
+        try {
+          const folder = await this.storage.createFolder({
+            name: args.name,
+            slug: args.slug,
+          });
+          return {
+            name: toolName,
+            success: true,
+            message: `Created folder "${args.name}" (${args.slug}).`,
+            data: folder,
+          };
+        } catch (err: any) {
+          return {
+            name: toolName,
+            success: false,
+            message: err.message ?? "Failed to create folder.",
+          };
+        }
+      }
+      case "classify": {
+        if (!args.missiveId || !args.classification) {
+          return { name: toolName, success: false, message: "missiveId and classification are required." };
+        }
+        try {
+          await this.storage.classifyMissive(args.missiveId, args.classification);
+          return {
+            name: toolName,
+            success: true,
+            message: `Classified message **${args.missiveId.slice(0, 8)}...** as "${args.classification}" and moved it to the correct folder.`,
+            data: { classification: args.classification },
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to classify." };
+        }
+      }
+      case "move": {
+        if (!args.missiveId || !args.folder) {
+          return { name: toolName, success: false, message: "missiveId and folder are required." };
+        }
+        try {
+          await this.storage.moveMissive(args.missiveId, args.folder);
+          return {
+            name: toolName,
+            success: true,
+            message: `Moved message **${args.missiveId.slice(0, 8)}...** to **${args.folder}**.`,
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to move message." };
+        }
+      }
+      case "moveThread": {
+        if (!args.threadId || !args.folder) {
+          return { name: toolName, success: false, message: "threadId and folder are required." };
+        }
+        try {
+          await this.storage.moveThread(args.threadId, args.folder);
+          return {
+            name: toolName,
+            success: true,
+            message: `Moved thread **${args.threadId.slice(0, 8)}...** to **${args.folder}**.`,
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to move thread." };
+        }
+      }
+      case "setOrganizations": {
+        if (!args.missiveId || !Array.isArray(args.organizations)) {
+          return { name: toolName, success: false, message: "missiveId and organizations array are required." };
+        }
+        try {
+          await this.storage.setMissiveOrganizations(args.missiveId, args.organizations);
+          return {
+            name: toolName,
+            success: true,
+            message: `Set organizations for message **${args.missiveId.slice(0, 8)}...** to: ${args.organizations.join(", ") || "(none)"}.`,
+            data: { organizations: args.organizations },
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to set organizations." };
+        }
+      }
+      case "setThreadOrganizations": {
+        if (!args.threadId || !Array.isArray(args.organizations)) {
+          return { name: toolName, success: false, message: "threadId and organizations array are required." };
+        }
+        try {
+          await this.storage.setThreadOrganizations(args.threadId, args.organizations);
+          return {
+            name: toolName,
+            success: true,
+            message: `Set organizations for thread **${args.threadId.slice(0, 8)}...** to: ${args.organizations.join(", ") || "(none)"}.`,
+            data: { organizations: args.organizations },
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to set organizations." };
+        }
+      }
+      case "setProjects": {
+        if (!args.missiveId || !Array.isArray(args.projects)) {
+          return { name: toolName, success: false, message: "missiveId and projects array are required." };
+        }
+        try {
+          await this.storage.setMissiveProjects(args.missiveId, args.projects);
+          return {
+            name: toolName,
+            success: true,
+            message: `Set projects for message **${args.missiveId.slice(0, 8)}...** to: ${args.projects.join(", ") || "(none)"}.`,
+            data: { projects: args.projects },
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to set projects." };
+        }
+      }
+      case "setThreadProjects": {
+        if (!args.threadId || !Array.isArray(args.projects)) {
+          return { name: toolName, success: false, message: "threadId and projects array are required." };
+        }
+        try {
+          await this.storage.setThreadProjects(args.threadId, args.projects);
+          return {
+            name: toolName,
+            success: true,
+            message: `Set projects for thread **${args.threadId.slice(0, 8)}...** to: ${args.projects.join(", ") || "(none)"}.`,
+            data: { projects: args.projects },
+          };
+        } catch (err: any) {
+          return { name: toolName, success: false, message: err.message ?? "Failed to set projects." };
+        }
+      }
+      default:
+        return { name: toolName, success: false, message: `Unknown tool: ${toolName}` };
+    }
+  }
+
+  /** Scan content for tool calls and execute them. Returns modified content (with TOOL_CALL lines removed) and results. */
+  private async processToolCalls(content: string): Promise<{ cleanedContent: string; results: ToolResult[] }> {
+    const toolCallRegex = /TOOL_CALL:(\w+)\((\{.*?\})\)/gs;
+    const results: ToolResult[] = [];
+    let cleanedContent = content;
+
+    let match: RegExpExecArray | null;
+    while ((match = toolCallRegex.exec(content)) !== null) {
+      const toolName = match[1]!;
+      const argsStr = match[2]!;
+      try {
+        const args = JSON.parse(argsStr);
+        const result = await this.executeTool(toolName, args);
+        results.push(result);
+      } catch {
+        results.push({ name: toolName, success: false, message: "Failed to parse tool arguments." });
+      }
+      // Remove the TOOL_CALL line from the visible content
+      cleanedContent = cleanedContent.replace(match[0]!, "").trim();
+    }
+
+    return { cleanedContent, results };
+  }
+
+  /** Build a dynamic system message with the current app context. */
+  private async buildSystemPrompt(): Promise<string> {
+    const parts: string[] = [
+      "You are Missive AI, an intelligent communication assistant integrated into the Missive platform. You help users manage their communications — emails, chat messages, tickets, and more. Be concise, helpful, and professional.",
+      "",
+      "=== APP CONTEXT ===",
+    ];
+
+    // Connected accounts
+    try {
+      const accounts = await this.connectors.listAll();
+      if (accounts.length > 0) {
+        parts.push(`Connected accounts (${accounts.length}):`);
+        for (const acct of accounts) {
+          parts.push(`- ${acct.provider}: ${acct.email} (${acct.label})`);
+        }
+      } else {
+        parts.push("No email accounts connected yet.");
+      }
+    } catch {
+      parts.push("Accounts: unavailable");
+    }
+
+    // Folders
+    try {
+      const folders = await this.storage.listFolders();
+      if (folders.length > 0) {
+        parts.push(`Folders: ${folders.map((f) => `${f.name} (${f.slug})`).join(", ")}`);
+      }
+    } catch {
+      parts.push("Folders: unavailable");
+    }
+
+    // Active rules
+    try {
+      const allRules = await this.rules.list();
+      const enabled = allRules.filter((r) => r.enabled);
+      if (enabled.length > 0) {
+        parts.push(`Active rules (${enabled.length}):`);
+        for (const rule of enabled) {
+          const conds = rule.conditions.map((c) => `${c.field} ${c.operator} "${c.value}"`).join(" AND ");
+          const acts = rule.actions.map((a) => `${a.type}${a.params?.folder ? ` → ${a.params.folder}` : ""}`).join(", ");
+          parts.push(`- "${rule.name}": if ${conds} then ${acts}`);
+        }
+      } else {
+        parts.push("No active rules.");
+      }
+    } catch {
+      parts.push("Rules: unavailable");
+    }
+
+    // Recent missives summary
+    try {
+      const recent = await this.storage.getRecentMissives(
+        new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        15
+      );
+      if (recent.length > 0) {
+        parts.push(`\nRecent messages (last 24h, ${recent.length} total):`);
+        for (const m of recent.slice(0, 10)) {
+          const sender = m.from.name ?? m.from.address;
+          const subj = m.subject ?? "(no subject)";
+          const folder = m.folder ?? "inbox";
+          const cls = m.classification ? ` [${m.classification}]` : "";
+          parts.push(`- From: ${sender} | Subject: ${subj} | Folder: ${folder}${cls}`);
+        }
+        if (recent.length > 10) {
+          parts.push(`... and ${recent.length - 10} more`);
+        }
+      } else {
+        parts.push("No messages in the last 24 hours.");
+      }
+    } catch {
+      parts.push("Recent messages: unavailable");
+    }
+
+    // Per-folder counts via folders API
+    try {
+      const folders = await this.storage.listFolders();
+      if (folders.length > 0) {
+        parts.push("\nFolder overview:");
+        for (const f of folders) {
+          parts.push(`- ${f.name} (${f.slug}): ${f.missiveCount} messages`);
+        }
+      }
+    } catch {
+      // Silently skip
+    }
+
+    // Organizations in use
+    try {
+      const orgs = await this.storage.listOrganizations();
+      if (orgs.length > 0) {
+        parts.push(`\nOrganizations in use: ${orgs.join(", ")}`);
+      }
+    } catch {
+      // Silently skip
+    }
+
+    // Projects in use
+    try {
+      const projs = await this.storage.listProjects();
+      if (projs.length > 0) {
+        parts.push(`\nProjects in use: ${projs.join(", ")}`);
+      }
+    } catch {
+      // Silently skip
+    }
+
+    parts.push("\nRespond helpfully. Use the context above to answer questions about the user's inbox. When asked to summarize or find something, use the information provided. Suggest rules or actions based on what you see in the user's messages.");
+
+    parts.push("\n" + this.getToolDefinitions());
+    return parts.join("\n");
   }
 
   private async fetchWithTimeout(
@@ -51,9 +391,10 @@ export class ChatService {
     messages: ChatMessage[],
     res: any
   ): Promise<void> {
+    const systemContent = await this.buildSystemPrompt();
     const systemMessage: ChatMessage = {
       role: "system",
-      content: `You are Missive AI, an intelligent communication assistant integrated into the Missive platform. You help users manage their communications — emails, chat messages, tickets, and more. You can summarize threads, classify messages, extract entities, and answer questions about the user's inbox. Be concise, helpful, and professional.`,
+      content: systemContent,
     };
 
     const body = JSON.stringify({
@@ -97,6 +438,7 @@ export class ChatService {
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let fullContent = "";
 
     try {
       while (true) {
@@ -116,6 +458,7 @@ export class ChatService {
             const parsed = JSON.parse(json);
             const content = parsed.choices?.[0]?.delta?.content ?? "";
             if (content) {
+              fullContent += content;
               res.write(
                 `data: ${JSON.stringify({ content })}\n\n`
               );
@@ -127,9 +470,27 @@ export class ChatService {
       }
     } finally {
       reader.releaseLock();
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-      res.end();
     }
+
+    // After stream completes, process any tool calls in the accumulated content
+    const { cleanedContent, results } = await this.processToolCalls(fullContent);
+
+    // If content was cleaned (tool lines removed), send the cleaned content
+    if (cleanedContent !== fullContent) {
+      res.write(`data: ${JSON.stringify({ toolCleaned: cleanedContent })}\n\n`);
+    }
+
+    // Send tool results if any
+    if (results.length > 0) {
+      for (const result of results) {
+        res.write(
+          `data: ${JSON.stringify({ toolResult: result })}\n\n`
+        );
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
   }
 
   /** Non-streaming chat completion for simple requests. */

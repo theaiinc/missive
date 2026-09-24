@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import type { Missive, Thread } from "@theaiinc/missive-core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useAccountColors } from "@/hooks/useAccountColors";
 
 async function fetchThread(
   id: string
@@ -25,6 +27,7 @@ async function fetchThread(
 export function ThreadView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { getColor } = useAccountColors();
   const { data, isLoading } = useQuery({
     queryKey: ["thread", id],
     queryFn: () => fetchThread(id!),
@@ -84,13 +87,23 @@ export function ThreadView() {
           const accounts = [...new Set(data?.missives.map((m) => m.accountEmail).filter(Boolean) as string[])];
           if (accounts.length === 0) return null;
           return (
-            <div className="flex items-center gap-2 mt-1.5">
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Accounts:</span>
-              {accounts.map((acct) => (
-                <Badge key={acct} variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal">
-                  {acct}
-                </Badge>
-              ))}
+              {accounts.map((acct) => {
+                const color = getColor(acct);
+                return (
+                  <span
+                    key={acct}
+                    className={cn(
+                      "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
+                      color.bg,
+                      color.text,
+                    )}
+                  >
+                    {acct}
+                  </span>
+                );
+              })}
             </div>
           );
         })()}
@@ -115,27 +128,28 @@ export function ThreadView() {
 
 function EmailCard({ missive }: { missive: Missive }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const { getColor } = useAccountColors();
+
+  const resizeIframe = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (doc) {
+        const height = doc.documentElement.scrollHeight;
+        if (height > 50) {
+          iframe.style.minHeight = `${height}px`;
+        }
+      }
+    } catch {}
+  }, []);
 
   useEffect(() => {
     if (!iframeRef.current || !missive.bodyHtml) return;
-    const iframe = iframeRef.current;
-    let retries = 0;
-    const timer = setInterval(() => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (doc) {
-          const height = doc.documentElement.scrollHeight;
-          if (height > 50) {
-            iframe.style.minHeight = `${height}px`;
-            clearInterval(timer);
-          }
-        }
-      } catch {}
-      retries++;
-      if (retries > 20) clearInterval(timer);
-    }, 200);
-    return () => clearInterval(timer);
-  }, [missive.bodyHtml]);
+    // Initial resize after a small delay to let the srcdoc render
+    const initial = setTimeout(resizeIframe, 100);
+    return () => clearTimeout(initial);
+  }, [missive.bodyHtml, resizeIframe]);
 
   return (
     <div className="border border-border rounded-lg bg-card">
@@ -156,9 +170,17 @@ function EmailCard({ missive }: { missive: Missive }) {
               {new Date(missive.receivedAt).toLocaleString()}
             </p>
             {missive.accountEmail && (
-              <p className="text-[11px] text-muted-foreground/70 mt-0.5">
-                via {missive.accountEmail}
-              </p>
+              <div className="mt-0.5">
+                <span
+                  className={cn(
+                    "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
+                    getColor(missive.accountEmail).bg,
+                    getColor(missive.accountEmail).text,
+                  )}
+                >
+                  {missive.accountEmail}
+                </span>
+              </div>
             )}
           </div>
         </div>
@@ -183,6 +205,7 @@ function EmailCard({ missive }: { missive: Missive }) {
             sandbox="allow-same-origin"
             title="Email body"
             srcDoc={wrapEmailHtml(missive.bodyHtml)}
+            onLoad={resizeIframe}
           />
         ) : (
           <div className="px-4 py-3 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
