@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit } from "@nestjs/common";
 import { Pool } from "pg";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { currentUser } from "../request-context";
+import { currentUser, runAsUser } from "../request-context";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -35,14 +35,18 @@ export class PostgresService implements OnModuleInit {
   /** Creates the system folders for a user; safe to call on every sign-in. */
   async ensureUserFolders(userId: string) {
     if (!UUID.test(userId)) throw new Error("Bad user id");
-    for (const f of SYSTEM_FOLDERS) {
-      await this.pool.query(
+    // As that user: folders has FORCE ROW LEVEL SECURITY, so without
+    // app.user_id the insert is refused unless the connection bypasses RLS.
+    await runAsUser({ id: userId, email: "" }, async () => {
+      for (const f of SYSTEM_FOLDERS) {
+        await this.query(
         `INSERT INTO folders (id, name, slug, icon, system, ord, owner_id, created_at, updated_at)
          VALUES ($1,$2,$3,$4,true,$5,$6,NOW(),NOW())
          ON CONFLICT (owner_id, slug) DO NOTHING`,
-        [f.slug, f.name, f.slug, f.icon, f.ord, userId]
-      );
-    }
+          [f.slug, f.name, f.slug, f.icon, f.ord, userId]
+        );
+      }
+    });
   }
 
   /** Resolve migration files — from dist/ back to src/ */

@@ -1,3 +1,4 @@
+import { addressIndex } from "./identity-crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { createHash } from "node:crypto";
@@ -99,7 +100,7 @@ export class MailboxService {
       channel: "email",
       direction: "inbound",
       provider: "missive",
-      providerMessageId: `${mailbox.address}:${bare(messageId)}`,
+      providerMessageId: `${await addressIndex("mailboxes.address", mailbox.address)}:${bare(messageId)}`,
       subject: parsed.subject ?? "(no subject)",
       body: parsed.text?.trim() || (html ? toText(html) : "") || "(no content)",
       bodyHtml: html,
@@ -173,7 +174,7 @@ export class MailboxService {
       channel: "email",
       direction: "outbound",
       provider: "missive",
-      providerMessageId: `${mailbox.address}:${messageId}`,
+      providerMessageId: `${await addressIndex("mailboxes.address", mailbox.address)}:${messageId}`,
       subject: mail.subject,
       body: mail.text,
       bodyHtml: html,

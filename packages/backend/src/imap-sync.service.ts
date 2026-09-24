@@ -31,7 +31,7 @@ export class ImapSyncService {
     let accounts: StoredConnector[];
 
     if (email) {
-      const account = await this.store.get(`imap:${email}`);
+      const account = await this.store.getByEmail("imap", email);
       accounts = account ? [account] : [];
     } else {
       accounts = await this.store.list("imap");

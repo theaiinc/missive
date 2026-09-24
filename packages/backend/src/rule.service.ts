@@ -1,4 +1,4 @@
-import { openRows } from "./storage/content-crypto";
+import { openRow, openRows, sealJson } from "./storage/content-crypto";
 import { Injectable } from "@nestjs/common";
 import { PostgresService } from "./storage/postgres.service";
 import type {
@@ -18,7 +18,7 @@ export class RuleService {
     const { rows } = await this.pg.query(
       "SELECT * FROM rules ORDER BY priority DESC, created_at ASC"
     );
-    return rows.map(rowToRule);
+    return (await openRows("rules", rows)).map(rowToRule);
   }
 
   /** Clear rules_evaluated_at on all missives so they are re-evaluated against changed rules. */
@@ -31,7 +31,7 @@ export class RuleService {
       "SELECT * FROM rules WHERE id = $1",
       [id]
     );
-    return rows.length > 0 ? rowToRule(rows[0]) : null;
+    return rows.length > 0 ? rowToRule(await openRow("rules", rows[0])) : null;
   }
 
   async create(data: {
@@ -51,14 +51,14 @@ export class RuleService {
         id,
         data.name,
         data.description ?? null,
-        JSON.stringify(data.conditions),
+        await sealJson("rules", "conditions", data.conditions),
         JSON.stringify(data.actions),
         data.enabled ?? true,
         data.priority ?? 0,
       ]
     );
     await this.resetEvaluations();
-    return rowToRule(rows[0]);
+    return rowToRule(await openRow("rules", rows[0]));
   }
 
   async update(
@@ -83,7 +83,7 @@ export class RuleService {
       sets.push(`description = $${idx}`); params.push(data.description); idx++;
     }
     if (data.conditions !== undefined) {
-      sets.push(`conditions = $${idx}`); params.push(JSON.stringify(data.conditions)); idx++;
+      sets.push(`conditions = $${idx}`); params.push(await sealJson("rules", "conditions", data.conditions)); idx++;
     }
     if (data.actions !== undefined) {
       sets.push(`actions = $${idx}`); params.push(JSON.stringify(data.actions)); idx++;
@@ -104,7 +104,7 @@ export class RuleService {
       params
     );
     await this.resetEvaluations();
-    return rows.length > 0 ? rowToRule(rows[0]) : null;
+    return rows.length > 0 ? rowToRule(await openRow("rules", rows[0])) : null;
   }
 
   async remove(id: string): Promise<void> {

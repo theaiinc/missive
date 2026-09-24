@@ -18,6 +18,8 @@ export const ENCRYPTED_COLUMNS = {
   missives: ["subject", "body", "body_html", "sender_name", "sender_address", "recipients", "account_email", "summary"],
   threads: ["subject"],
   digests: ["summary", "items"],
+  // Rule conditions quote addresses and subjects the user typed.
+  rules: ["conditions"],
 } as const;
 
 export type EncryptedTable = keyof typeof ENCRYPTED_COLUMNS;

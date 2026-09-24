@@ -21,7 +21,7 @@ export class SyncService {
     let accounts: StoredConnector[];
 
     if (email) {
-      const account = await this.store.get(`gmail:${email}`);
+      const account = await this.store.getByEmail("gmail", email);
       accounts = account ? [account] : [];
     } else {
       accounts = await this.store.list("gmail");
@@ -188,7 +188,7 @@ export class SyncService {
     let accounts: StoredConnector[];
 
     if (email) {
-      const account = await this.store.get(`outlook:${email}`);
+      const account = await this.store.getByEmail("outlook", email);
       accounts = account ? [account] : [];
     } else {
       accounts = await this.store.list("outlook");

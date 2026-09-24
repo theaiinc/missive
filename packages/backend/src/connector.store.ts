@@ -1,4 +1,5 @@
 import { openForOwner, sealForCurrentUser } from "./data-cipher";
+import { addressIndex } from "./identity-crypto";
 import { Injectable } from "@nestjs/common";
 import { google, type Auth } from "googleapis";
 import { PostgresService } from "./storage/postgres.service";
@@ -238,7 +239,7 @@ export class ConnectorStore {
     provider: string,
     data: Omit<StoredConnector, "id">
   ): Promise<StoredConnector> {
-    const id = `${provider}:${data.email}`;
+    const id = await ConnectorStore.idFor(provider, data.email);
     const { rows } = await this.pg.query(
       `INSERT INTO connectors (id, provider, label, email, credentials, status, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW())
@@ -249,9 +250,28 @@ export class ConnectorStore {
        RETURNING *`,
       // OAuth tokens and IMAP passwords are stored encrypted for their owner;
       // the column holds a JSON string ("mv1.…") instead of the object.
-      [id, provider, data.label, data.email, JSON.stringify(await sealForCurrentUser(CREDENTIALS_AAD, JSON.stringify(data.tokens)))]
+      [
+        id,
+        provider,
+        await sealForCurrentUser("connectors.label", data.label),
+        await sealForCurrentUser("connectors.email", data.email),
+        JSON.stringify(await sealForCurrentUser(CREDENTIALS_AAD, JSON.stringify(data.tokens))),
+      ]
     );
     return rowToConnector(rows[0]);
+  }
+
+  /**
+   * A connector's id is "<provider>:<blind index of its address>", so it never
+   * contains the address (which is stored encrypted in email/label).
+   */
+  static async idFor(provider: string, email: string): Promise<string> {
+    return `${provider}:${await addressIndex("connectors.email", email)}`;
+  }
+
+  /** The connector for this provider and account address, if connected. */
+  async getByEmail(provider: string, email: string): Promise<StoredConnector | undefined> {
+    return this.get(await ConnectorStore.idFor(provider, email));
   }
 
   async get(id: string): Promise<StoredConnector | undefined> {
@@ -306,8 +326,8 @@ async function rowToConnector(row: any): Promise<StoredConnector> {
   return {
     id: row.id,
     provider: row.provider,
-    label: row.label,
-    email: row.email ?? "",
+    label: await openForOwner(row.owner_id, "connectors.label", row.label ?? ""),
+    email: await openForOwner(row.owner_id, "connectors.email", row.email ?? ""),
     tokens: creds,
     connectedAt: row.created_at?.toISOString?.() ?? row.created_at,
     lastSyncAt: row.last_sync_at
