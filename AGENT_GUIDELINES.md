@@ -122,6 +122,11 @@ The `.env` file lives at the monorepo root (`/Users/stevetran/theaiincmissive/.e
   - `POST /api/v1/folders/move-thread` — move entire thread
 - **Filtering:** `GET /api/v1/search?folder=<slug>` filters by folder slug. Inbox defaults to `folder=inbox` from UI, search doesn't pass folder.
 - **Auto-assignment:** Classification result maps to a folder via `classificationToFolder()` (e.g. "invoice" → "invoices"), called during classification and sync.
+- **Bug fix (2026-06-19):** Three issues prevented emails from being auto-sorted into folders:
+  1. The AI prompt in `organizer.service.ts` instructed the model to use `inbox|archive|unknown` as folders, but actual system folders are `invoices`, `complaints`, `leads`, `support`, `personal`, `archived`
+  2. The folder parser only accepted `"inbox"` or `"archive"` — rejected all other valid folder names
+  3. Even when classification was set correctly, the `applyClassification` method relied on the AI-suggested folder (which was always wrong) instead of using the `classificationToFolder()` mapping. Fixed to fall back to `classificationToFolder(result.classification)` when AI doesn't suggest a valid folder.
+  4. Added orphan fix: on each organizer pass, missives with a classification but still stuck in `inbox` folder get moved to the correct folder
 - **UI:** Folders listed first in sidebar above Search/Settings. Active folder highlighted. Missive count badge shown. Inbox header dynamically shows current folder name.
 
 ## Auto-Sync
@@ -152,13 +157,13 @@ The `.env` file lives at the monorepo root (`/Users/stevetran/theaiincmissive/.e
 ## Notifications
 - **Library:** `sonner` for toast notifications. `Toaster` component mounted in `Layout.tsx` (position: bottom-left).
 - **Backend endpoint:** `GET /api/v1/recent-missives?since=<ISO>&limit=<N>` — returns missives created after the given timestamp. Used by the polling hook.
+  - **IMPORTANT:** Must return `{ missives: Missive[] }` — NOT a raw array. The frontend expects the `missives` key. See controller `@Get("recent-missives")`.
 - **Hook:** `useNotifications()` in `src/hooks/useNotifications.ts`. Polls every 30 seconds. On new messages:
   - Shows a **sonner toast** with sender name, subject, and "View" button (links to `/inbox`)
   - Fires a **browser Notification** (`"Missive: sender"` with subject as body) if permission granted
   - Updates **document title** to `(N) Missive` showing unread count
   - Clears badge count when the tab becomes visible (`visibilitychange`)
-- **Permissions:** Requests `Notification.permission` on mount if not yet decided.
-- **Storage:** Uses `localStorage` key `missive_last_seen` to track which messages have been seen/notified.
+- **Bug fix (2026-06-19):** `missive.controller.ts` was returning a raw `Missive[]` array from `getRecentMissives()` when `since` was provided, but the frontend expects `{ missives: Missive[] }`. The `if (!data.missives?.length) return;` guard in the polling hook always fired, so no notifications ever appeared. Fixed by wrapping the return value.
 
 ## Rules System (AI-Generated Organization)
 
@@ -179,10 +184,21 @@ The `.env` file lives at the monorepo root (`/Users/stevetran/theaiincmissive/.e
 - **RuleProposal** — AI-generated draft with `needsClarification` flag for ambiguous requests
 
 ### Backend
-- **RuleService** — `list()`, `get()`, `create()`, `update()`, `remove()`, `evaluate(missive)`, `evaluateAll()`, `applyActions(missiveId, actions)`
+- **RuleService** — `list()`, `get()`, `create()`, `update()`, `remove()`, `evaluate(missive)`, `evaluateAll()`, `evaluatePending(limit)`, `applyActions(missiveId, actions)`
 - **RuleController** — `GET /api/v1/rules`, `POST /api/v1/rules`, `POST /:id/toggle`, `DELETE /:id`, `POST /evaluate-all`
 - **Migration** (`005_add_rules.sql`) — `rules` table with JSONB conditions/actions columns, enabled/applied_count tracking
+- **Migration** (`007_add_rules_evaluated_at.sql`) — adds `rules_evaluated_at` column to `missives` table + partial index to find pending missives efficiently
 - **Sync integration** — After each missive is saved in `SyncService.syncGmail()` and `syncOutlook()`, `rules.evaluate(missive)` is called. If it matches, `rules.applyActions()` is called to move, label, archive, etc.
+
+### Auto-Evaluation (Periodic)
+- The `SyncScheduler` runs `rules.evaluatePending(50)` on every tick (every ~5 min) **after** sync + organizer classification
+- `evaluatePending()` queries missives where `rules_evaluated_at IS NULL OR rules_evaluated_at < updated_at` — this catches:
+  - Missives that were synced before any rule existed
+  - Missives that got classified by the OrganizerService after their initial sync (so `classification`-based rules now match)
+  - Missives that were updated for any other reason
+- When a rule matches, `evaluate()` updates the `applied_count` on the rule AND sets `rules_evaluated_at` on the missive
+- When no rule matches, `rules_evaluated_at` is still set to avoid re-scanning the same missive every tick
+- The partial index `idx_missives_rules_pending` on `missives(rules_evaluated_at NULLS FIRST) WHERE rules_evaluated_at IS NULL OR rules_evaluated_at < updated_at` keeps the pending lookup efficient
 
 ### Frontend
 - **ChatWidget** — On send, first tries `POST /api/v1/chat/rule-proposal`. If a proposal is returned:
@@ -190,9 +206,76 @@ The `.env` file lives at the monorepo root (`/Users/stevetran/theaiincmissive/.e
   - Otherwise → show `RuleCard` inside the chat bubble with conditions/actions display + Approve/Reject buttons
 - Approve calls `POST /api/v1/rules` to persist the rule, then `POST /api/v1/rules/evaluate-all` to apply to existing messages
 - The `/api/v1/rules` endpoint expects: `{ name, description?, conditions: [{field, operator, value}], actions: [{type, params?}] }`
+- **Rules page** (`packages/web/src/pages/Rules.tsx`) — `/rules` route, linked in sidebar. Lists all rules with toggle (enable/disable) and delete. Uses TanStack Query for data fetching and mutations. Returns `{ missives: Missive[] }` shape.
 
 ## Strategic Positioning
 - Email clients manage messages.
 - **Missive** ingests and normalizes communications.
 - **Pathway** remembers, relates, and orchestrates.
 - **Cognition** reasons, decides, and acts.
+
+## Organizations (Classification Layer)
+
+### How It Works
+Organizations are a named classification dimension (alongside "projects" and "classifications") that allows users to tag missives and threads with which organization(s) they belong to. Since one project can belong to multiple organizations, the field is a `TEXT[]` array on the `missives` table.
+
+### Database
+- **Migration** (`008_add_organizations.sql`) — adds `organizations TEXT[] DEFAULT '{}'` column to `missives` table + GIN index for efficient `ANY(organizations)` queries.
+- The column is auto-picked up by `SELECT *` queries and mapped in `rowToMissive()`.
+
+### Backend API Endpoints
+- `GET /api/v1/organizations` — returns all distinct organization names across all missives
+- `POST /api/v1/missive/:id/organizations` — set organizations for a single missive (body: `{ organizations: string[] }`)
+- `POST /api/v1/thread/:id/organizations` — set organizations for all missives in a thread
+- `GET /api/v1/search?organization=<name>` — filter missives by organization (uses `$1 = ANY(organizations)`)
+
+### Storage Service Methods
+- `setMissiveOrganizations(id, organizations)` — updates `organizations` column
+- `setThreadOrganizations(threadId, organizations)` — updates all missives in a thread
+- `listOrganizations()` — `SELECT DISTINCT unnest(organizations) FROM missives`
+
+### ChatService Tools
+Two new tool definitions for the AI assistant:
+- `setOrganizations` — sets organizations on a single missive
+- `setThreadOrganizations` — sets organizations on an entire thread
+
+Both added to `getToolDefinitions()` and `executeTool()` switch in `chat.service.ts`.
+
+### Frontend Visual Indicators
+- **Deterministic color palette** — 10 predefined Tailwind color pairs (violet, emerald, orange, cyan, pink, teal, yellow, lime, fuchsia, rose), each with `bg`, `text`, and `dot` classes. Colors are assigned via string hash of the org name, so each org always gets the same color.
+- **Organization badges** — Displayed as small inline `span` elements next to the classification badge in the inbox row, showing a colored dot + org name.
+- **Organization filter dropdown** — A `<select>` element in the inbox header (next to result count) lets users filter the current folder by organization. Hidden when no orgs exist.
+- **System prompt context** — `ChatService.buildSystemPrompt()` now lists available organizations via `listOrganizations()`.
+
+### SearchQuery Type
+Extended with optional `organization: string` and `project: string` fields for filtering.
+
+## Projects (Entity Layer)
+
+Projects are a first-class entity dimension alongside organizations, stored identically as a `TEXT[]` array on `missives`.
+
+### Database
+- **Migration** (`009_add_projects.sql`) — adds `projects TEXT[] DEFAULT '{}'` column to `missives` + GIN index.
+
+### Backend
+- Storage methods: `setMissiveProjects`, `setThreadProjects`, `listProjects`
+- API endpoints: `GET /api/v1/projects`, `POST /missive/:id/projects`, `POST /thread/:id/projects`
+- Search filter: `GET /api/v1/search?project=<name>`
+- ChatService tools: `setProjects`, `setThreadProjects` with definitions and execution handlers
+- System prompt context lists projects in use
+
+### Settings Page
+Both Organizations and Projects are managed from the **Settings** page under `ConfigSection` components:
+- **Add**: Type a name and click Add
+- **Rename**: Click the name to edit inline
+- **Delete**: Click the trash icon to remove
+- **Color picker**: Click the color swatch to choose from 8 colors (same palette as account colors)
+- Config is stored in `localStorage` under `missive_managed_organizations` and `missive_managed_projects` keys, using a shared `useEntityConfig` hook
+
+### Inbox Row Display
+Org and project names appear as colored badges (with a colored dot + name) next to the classification badge in each inbox row:
+- Badge colors come from the Settings-configurable palette
+- Fallback: deterministic hash-based colors for any org/project name not in the managed list
+
+### Organization Filter
+A `<select>` dropdown in the inbox header (next to the results count) filters by organization. Projects have a similar filter next to it.

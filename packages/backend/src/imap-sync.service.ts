@@ -1,3 +1,4 @@
+import { safeError } from "./log-safe";
 import { Injectable } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
@@ -30,7 +31,7 @@ export class ImapSyncService {
     let accounts: StoredConnector[];
 
     if (email) {
-      const account = await this.store.get(`imap:${email}`);
+      const account = await this.store.getByEmail("imap", email);
       accounts = account ? [account] : [];
     } else {
       accounts = await this.store.list("imap");
@@ -69,7 +70,7 @@ export class ImapSyncService {
         // Track last sync time
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
       } catch (err) {
-        console.error(`IMAP sync error for ${connector.email}:`, err);
+        console.error("IMAP sync error:", safeError(err));
         results[connector.email] = { error: "Sync failed" };
       }
     }
@@ -90,28 +91,20 @@ export class ImapSyncService {
       auth: config.accessToken
         ? { user: config.user, accessToken: config.accessToken }
         : { user: config.user, pass: config.password! },
-      logger: {
-        debug: (msg: any) => console.debug("[IMAP DEBUG]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-        info: (msg: any) => console.info("[IMAP]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-        warn: (msg: any) => console.warn("[IMAP WARN]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-        error: (msg: any) => console.error("[IMAP ERROR]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-      },
+      // The protocol log carries the username and server responses (which can
+      // quote mailbox contents), so it stays off, as in syncAccount.
+      logger: false,
     });
 
     try {
       await client.connect();
-      console.log(`[IMAP] Connected OK to ${config.host}:${config.port} as ${config.user}`);
+      console.log(`[IMAP] Connected OK to ${config.host}:${config.port}`);
       await client.logout();
       return config.user;
     } catch (err: any) {
       // Extract actual IMAP server response text for meaningful error messages
       const imapResponse = err.response?.text || err.responseText || err.message || String(err);
-      console.error(`[IMAP] FAILED for ${config.host}:${config.port} as ${config.user}:`, {
-        message: err.message,
-        code: err.code,
-        responseStatus: err.responseStatus,
-        responseText: imapResponse,
-      });
+      console.error(`[IMAP] FAILED for ${config.host}:${config.port}:`, safeError(err));
       throw new Error(`IMAP connection failed: ${imapResponse}`);
     }
   }
@@ -160,7 +153,14 @@ export class ImapSyncService {
 
           // Skip if already synced with full bodyHtml
           const existing = await this.storage.getMissive(providerMessageId);
-          if (existing && existing.bodyHtml) continue;
+          // New means never stored. A stored message is fetched again only to
+          // repair a body that came in empty; that repair keeps its read state
+          // and isn't counted, announced, re-run through rules or re-added to
+          // its thread. (Skipping only when bodyHtml was present re-fetched every
+          // plain-text email on each sync, reported it as new and reset it to
+          // unread.)
+          if (existing && existing.body !== "(no content)") continue;
+          const isNew = !existing;
 
           // Parse the raw email
           const parsed = await simpleParser(msg.source);
@@ -234,7 +234,7 @@ export class ImapSyncService {
               address: fromAddress,
             },
             to: toList,
-            status: "unread",
+            status: existing?.status ?? "unread",
             accountEmail: connector.email,
             receivedAt: dateRaw.toISOString(),
             createdAt: new Date().toISOString(),
@@ -242,6 +242,7 @@ export class ImapSyncService {
           };
 
           await this.storage.saveMissive(missive);
+          if (!isNew) continue;
 
           // Apply rules
           const ruleActions = await this.rules.evaluate(missive);
@@ -249,7 +250,7 @@ export class ImapSyncService {
             await this.rules.applyActions(missive.id, ruleActions);
           }
 
-          thread.missiveIds.push(missive.id);
+          if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
           thread.messageCount = thread.missiveIds.length;
           thread.lastActivityAt = new Date().toISOString();
           await this.storage.saveThread(thread);

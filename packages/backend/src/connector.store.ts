@@ -1,6 +1,9 @@
+import { openForOwner, sealForCurrentUser } from "./data-cipher";
+import { addressIndex } from "./identity-crypto";
 import { Injectable } from "@nestjs/common";
 import { google, type Auth } from "googleapis";
 import { PostgresService } from "./storage/postgres.service";
+import { mainSite } from "./auth/sites";
 
 export interface StoredConnector {
   id: string;
@@ -12,22 +15,33 @@ export interface StoredConnector {
   lastSyncAt?: string | null;
 }
 
+/**
+ * The web app's OAuth landing page (pages/OAuthCallback) at the address the
+ * person is using (see auth/sites.ts), so connecting an account from
+ * mail.bugmole.com returns there, where their session is. Each address must
+ * be an allowed redirect in the Google / Microsoft app.
+ */
+const oauthRedirect = (appUrl: string, override: string | undefined) => override || `${appUrl}/oauth`;
+const gmailRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.GMAIL_REDIRECT_URI);
+const outlookRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.OUTLOOK_REDIRECT_URI);
+
 @Injectable()
 export class ConnectorStore {
   constructor(private readonly pg: PostgresService) {}
 
   // ── Gmail OAuth ──
 
-  createOAuth2Client(): Auth.OAuth2Client {
+  /** appUrl only matters for the sign-in and code exchange; refreshing doesn't use a redirect. */
+  createOAuth2Client(appUrl = mainSite().appUrl): Auth.OAuth2Client {
     return new google.auth.OAuth2(
       process.env.GMAIL_CLIENT_ID,
       process.env.GMAIL_CLIENT_SECRET,
-      process.env.GMAIL_REDIRECT_URI ?? "http://localhost:5173/oauth"
+      gmailRedirect(appUrl)
     );
   }
 
-  getGmailAuthUrl(): string {
-    const oauth2 = this.createOAuth2Client();
+  getGmailAuthUrl(appUrl: string): string {
+    const oauth2 = this.createOAuth2Client(appUrl);
     return oauth2.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
@@ -94,13 +108,13 @@ export class ConnectorStore {
   // ── Outlook / Microsoft OAuth ──
 
   private get outlookTenant(): string {
-    return process.env.OUTLOOK_TENANT ?? "common";
+    // The Worker passes "" when OUTLOOK_TENANT isn't set, which made the URL "//oauth2/…".
+    return process.env.OUTLOOK_TENANT || "common";
   }
 
-  getOutlookAuthUrl(): string {
+  getOutlookAuthUrl(appUrl: string): string {
     const clientId = process.env.OUTLOOK_CLIENT_ID;
-    const redirectUri =
-      process.env.OUTLOOK_REDIRECT_URI ?? "http://localhost:5173/oauth";
+    const redirectUri = outlookRedirect(appUrl);
     const scope =
       "openid profile email User.Read Mail.Read Mail.ReadBasic Mail.Send offline_access IMAP.AccessAsUser.All";
     return (
@@ -116,13 +130,13 @@ export class ConnectorStore {
   }
 
   async exchangeOutlookCode(
-    code: string
+    code: string,
+    appUrl: string
   ): Promise<{
     tokens: { access_token: string; refresh_token?: string; expiry_date?: number };
     email: string;
   }> {
-    const redirectUri =
-      process.env.OUTLOOK_REDIRECT_URI ?? "http://localhost:5173/oauth";
+    const redirectUri = outlookRedirect(appUrl);
     const res = await fetch(
       `https://login.microsoftonline.com/${this.outlookTenant}/oauth2/v2.0/token`,
       {
@@ -234,7 +248,7 @@ export class ConnectorStore {
     provider: string,
     data: Omit<StoredConnector, "id">
   ): Promise<StoredConnector> {
-    const id = `${provider}:${data.email}`;
+    const id = await ConnectorStore.idFor(provider, data.email);
     const { rows } = await this.pg.query(
       `INSERT INTO connectors (id, provider, label, email, credentials, status, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW())
@@ -243,9 +257,30 @@ export class ConnectorStore {
          credentials = EXCLUDED.credentials,
          updated_at = NOW()
        RETURNING *`,
-      [id, provider, data.label, data.email, JSON.stringify(data.tokens)]
+      // OAuth tokens and IMAP passwords are stored encrypted for their owner;
+      // the column holds a JSON string ("mv1.…") instead of the object.
+      [
+        id,
+        provider,
+        await sealForCurrentUser("connectors.label", data.label),
+        await sealForCurrentUser("connectors.email", data.email),
+        JSON.stringify(await sealForCurrentUser(CREDENTIALS_AAD, JSON.stringify(data.tokens))),
+      ]
     );
     return rowToConnector(rows[0]);
+  }
+
+  /**
+   * A connector's id is "<provider>:<blind index of its address>", so it never
+   * contains the address (which is stored encrypted in email/label).
+   */
+  static async idFor(provider: string, email: string): Promise<string> {
+    return `${provider}:${await addressIndex("connectors.email", email)}`;
+  }
+
+  /** The connector for this provider and account address, if connected. */
+  async getByEmail(provider: string, email: string): Promise<StoredConnector | undefined> {
+    return this.get(await ConnectorStore.idFor(provider, email));
   }
 
   async get(id: string): Promise<StoredConnector | undefined> {
@@ -262,14 +297,14 @@ export class ConnectorStore {
       "SELECT * FROM connectors WHERE provider = $1 ORDER BY created_at ASC",
       [provider]
     );
-    return rows.map(rowToConnector);
+    return Promise.all(rows.map(rowToConnector));
   }
 
   async listAll(): Promise<StoredConnector[]> {
     const { rows } = await this.pg.query(
       "SELECT * FROM connectors ORDER BY provider, created_at ASC"
     );
-    return rows.map(rowToConnector);
+    return Promise.all(rows.map(rowToConnector));
   }
 
   async remove(id: string): Promise<void> {
@@ -288,16 +323,20 @@ export class ConnectorStore {
   }
 }
 
-function rowToConnector(row: any): StoredConnector {
+const CREDENTIALS_AAD = "connectors.credentials";
+
+async function rowToConnector(row: any): Promise<StoredConnector> {
+  // Encrypted rows hold a JSON string ("mv1.…"); rows from before encryption
+  // hold the object itself until the startup backfill rewrites them.
   const creds =
     typeof row.credentials === "string"
-      ? JSON.parse(row.credentials)
+      ? JSON.parse(await openForOwner(row.owner_id, CREDENTIALS_AAD, row.credentials))
       : row.credentials;
   return {
     id: row.id,
     provider: row.provider,
-    label: row.label,
-    email: row.email ?? "",
+    label: await openForOwner(row.owner_id, "connectors.label", row.label ?? ""),
+    email: await openForOwner(row.owner_id, "connectors.email", row.email ?? ""),
     tokens: creds,
     connectedAt: row.created_at?.toISOString?.() ?? row.created_at,
     lastSyncAt: row.last_sync_at

@@ -28,6 +28,7 @@ export const ConnectorProvider = z.enum([
   "crm",
   "helpdesk",
   "imap",
+  "missive", // a mailbox Missive hosts itself, on a custom domain
 ]);
 export type ConnectorProvider = z.infer<typeof ConnectorProvider>;
 
@@ -93,6 +94,8 @@ export const MissiveSchema = z.object({
   folder: z.string().optional(),                   // folder slug (inbox, archived, invoices, complaints, or custom)
   accountEmail: z.string().optional(),            // which account this was synced from (e.g. user@gmail.com)
   entityIds: z.array(z.string()).optional(),     // denormalized refs to Pathway entity IDs
+  organizations: z.array(z.string()).optional(), // organization names this missive belongs to
+  projects: z.array(z.string()).optional(), // project names this missive belongs to
   receivedAt: z.string().datetime(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

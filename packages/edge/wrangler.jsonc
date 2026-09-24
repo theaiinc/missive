@@ -1,0 +1,67 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // missive.theaiinc.com
+  //  - serves the web app (packages/web/dist) as static assets
+  //  - runs the API (Dockerfile.backend) in a Cloudflare Container
+  //  - receives mail for hosted mailboxes (Email Routing → email handler)
+  //  - sends it (Email Sending binding, called by the API at /internal/send)
+  //
+  // Secrets (wrangler secret put …): DATABASE_URL, SESSION_SECRET,
+  // AEGIS_CLIENT_SECRET, INBOUND_SECRET, EDGE_SECRET, MISSIVE_DATA_KEY, and
+  // AEGIS_CLIENT_SECRET_<CLIENT_ID> for each MISSIVE_SITES client. Optional, for connecting
+  // Gmail / Outlook in Settings: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
+  // OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET, OUTLOOK_TENANT (their OAuth apps
+  // must allow the redirect https://missive.theaiinc.com/oauth).
+  // Deploy: pnpm --filter @theaiinc/missive-edge run deploy (needs Docker).
+  "name": "missive",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "32351d590fd6134e6c2328cc976952f7",
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*", "/internal/*"]
+  },
+  "containers": [
+    {
+      "class_name": "MissiveApi",
+      "image": "../../Dockerfile.backend",
+      "image_build_context": "../..",
+      // The API holds the sync scheduler, so there is exactly one instance.
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "API", "class_name": "MissiveApi" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MissiveApi"] }],
+  // Keeps the API awake so connected accounts sync every minute (see scheduled()).
+  "triggers": { "crons": ["* * * * *"] },
+  "send_email": [{ "name": "EMAIL" }],
+  // Every inbound message is kept here first, so a message isn't lost if the
+  // API is down; objects expire after 30 days (bucket lifecycle rule).
+  "r2_buckets": [{ "binding": "INBOUND", "bucket_name": "missive-inbound" }],
+  "vars": {
+    "APP_URL": "https://missive.theaiinc.com",
+    "AEGIS_ISSUER": "https://id.theaiinc.com",
+    "AEGIS_CLIENT_ID": "missive",
+    // mail.bugmole.com signs in with the Bugmole tenant's own client.
+    "MISSIVE_SITES": "mail.bugmole.com=bugmole-mail",
+    // Email Routing sends bugmole.com's other addresses here too; the ones
+    // that aren't Missive mailboxes still reach Steve.
+    "FORWARD_UNKNOWN": "bugmole.com=stevetran.dev@gmail.com",
+    // No AI model is hosted yet; see SyncScheduler.runOrganizer.
+    "MISSIVE_ORGANIZER": "off"
+  },
+  // Custom domains missive.theaiinc.com and mail.bugmole.com are attached to
+  // this Worker in Cloudflare (Workers → missive → Domains), not listed here.
+  // Listing any makes wrangler replace the whole set on every deploy, and it
+  // then also needs to read each zone's routes, which the deploy token can't
+  // for bugmole.com. With no routes, wrangler leaves the domains alone.
+  "routes": []
+}

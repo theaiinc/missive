@@ -2,6 +2,7 @@ import "reflect-metadata";
 import * as dotenv from "dotenv";
 import * as path from "path";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 import { JsonExceptionFilter } from "./json-exception.filter";
 
@@ -9,7 +10,11 @@ import { JsonExceptionFilter } from "./json-exception.filter";
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Hosted behind the edge Worker, which is the only public entry point.
+  app.set("trust proxy", true);
+  // Inbound mail arrives as the raw message (see MailboxController.inbound).
+  app.useBodyParser("raw", { type: "message/rfc822", limit: "40mb" });
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN ?? "http://localhost:5173",

@@ -1,13 +1,17 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import type { Missive, Thread } from "@theaiinc/missive-core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Reply } from "lucide-react";
+import { useCompose } from "@/components/Compose";
+import { useMe } from "@/hooks/useMe";
+import { cn } from "@/lib/utils";
+import { useAccountColors } from "@/hooks/useAccountColors";
 
 async function fetchThread(
   id: string
@@ -25,6 +29,7 @@ async function fetchThread(
 export function ThreadView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { getColor } = useAccountColors();
   const { data, isLoading } = useQuery({
     queryKey: ["thread", id],
     queryFn: () => fetchThread(id!),
@@ -84,13 +89,23 @@ export function ThreadView() {
           const accounts = [...new Set(data?.missives.map((m) => m.accountEmail).filter(Boolean) as string[])];
           if (accounts.length === 0) return null;
           return (
-            <div className="flex items-center gap-2 mt-1.5">
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Accounts:</span>
-              {accounts.map((acct) => (
-                <Badge key={acct} variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal">
-                  {acct}
-                </Badge>
-              ))}
+              {accounts.map((acct) => {
+                const color = getColor(acct);
+                return (
+                  <span
+                    key={acct}
+                    className={cn(
+                      "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
+                      color.bg,
+                      color.text,
+                    )}
+                  >
+                    {acct}
+                  </span>
+                );
+              })}
             </div>
           );
         })()}
@@ -115,27 +130,52 @@ export function ThreadView() {
 
 function EmailCard({ missive }: { missive: Missive }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const { getColor } = useAccountColors();
+  const compose = useCompose();
+  const { data: me } = useMe();
+  // Replies go out from the hosted mailbox the message belongs to.
+  const mailbox = me?.mailboxes.find((m) => m.address === missive.accountEmail);
+  const reply = () => {
+    const outbound = missive.direction === "outbound";
+    const subject = missive.subject ?? "";
+    compose({
+      from: mailbox!.address,
+      to: outbound ? missive.to.map((t) => t.address).join(", ") : missive.from.address,
+      subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+      text: `\n\nOn ${new Date(missive.receivedAt).toLocaleString()}, ${missive.from.name ?? missive.from.address} wrote:\n${missive.body
+        .split("\n")
+        .map((l) => `> ${l}`)
+        .join("\n")}`,
+      replyTo: missive.id,
+    });
+  };
+
+  const resizeIframe = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (doc) {
+        const height = doc.documentElement.scrollHeight;
+        if (height > 50) {
+          iframe.style.minHeight = `${height}px`;
+        }
+      }
+    } catch {}
+  }, []);
+
+  const onIframeLoad = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (doc) openLinksInNewTabs(doc);
+    resizeIframe();
+  }, [resizeIframe]);
 
   useEffect(() => {
     if (!iframeRef.current || !missive.bodyHtml) return;
-    const iframe = iframeRef.current;
-    let retries = 0;
-    const timer = setInterval(() => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (doc) {
-          const height = doc.documentElement.scrollHeight;
-          if (height > 50) {
-            iframe.style.minHeight = `${height}px`;
-            clearInterval(timer);
-          }
-        }
-      } catch {}
-      retries++;
-      if (retries > 20) clearInterval(timer);
-    }, 200);
-    return () => clearInterval(timer);
-  }, [missive.bodyHtml]);
+    // Initial resize after a small delay to let the srcdoc render
+    const initial = setTimeout(resizeIframe, 100);
+    return () => clearTimeout(initial);
+  }, [missive.bodyHtml, resizeIframe]);
 
   return (
     <div className="border border-border rounded-lg bg-card">
@@ -156,13 +196,27 @@ function EmailCard({ missive }: { missive: Missive }) {
               {new Date(missive.receivedAt).toLocaleString()}
             </p>
             {missive.accountEmail && (
-              <p className="text-[11px] text-muted-foreground/70 mt-0.5">
-                via {missive.accountEmail}
-              </p>
+              <div className="mt-0.5">
+                <span
+                  className={cn(
+                    "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
+                    getColor(missive.accountEmail).bg,
+                    getColor(missive.accountEmail).text,
+                  )}
+                >
+                  {missive.accountEmail}
+                </span>
+              </div>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {mailbox && (
+            <Button variant="outline" size="sm" onClick={reply}>
+              <Reply className="w-3.5 h-3.5 mr-1.5" />
+              Reply
+            </Button>
+          )}
           {missive.classification && (
             <Badge variant="secondary" className="text-[10px]">
               {missive.classification}
@@ -180,9 +234,12 @@ function EmailCard({ missive }: { missive: Missive }) {
             ref={iframeRef}
             className="w-full border-0"
             style={{ minHeight: "200px" }}
-            sandbox="allow-same-origin"
+            // No scripts. Links may open a new tab (openLinksInNewTabs), and
+            // that tab is an ordinary page, not sandboxed like the email.
+            sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
             title="Email body"
             srcDoc={wrapEmailHtml(missive.bodyHtml)}
+            onLoad={onIframeLoad}
           />
         ) : (
           <div className="px-4 py-3 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
@@ -192,6 +249,26 @@ function EmailCard({ missive }: { missive: Missive }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Web links in an email open in a new tab, whatever target the email gave
+ * them, and without window.opener or a referrer, so the site can't reach
+ * Missive or see which message the link came from. mailto:, tel: and
+ * in-message (#) links are left alone.
+ */
+function openLinksInNewTabs(doc: Document) {
+  for (const base of Array.from(doc.querySelectorAll("base[target]"))) base.removeAttribute("target");
+  for (const link of Array.from(doc.querySelectorAll<HTMLAnchorElement | HTMLAreaElement>("a[href], area[href]"))) {
+    // "#…" resolves against Missive's own URL in a srcdoc frame; it jumps within the message.
+    if (link.getAttribute("href")?.trim().startsWith("#")) continue;
+    if (/^https?:$/.test(link.protocol)) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    } else if (link.target) {
+      link.removeAttribute("target");
+    }
+  }
 }
 
 /**

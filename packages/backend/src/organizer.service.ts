@@ -1,6 +1,9 @@
+import { openRow, openRows, seal, sealJson } from "./storage/content-crypto";
+import { safeError } from "./log-safe";
 import { Injectable, Logger } from "@nestjs/common";
 import { StorageService } from "./storage/storage.service";
 import { PostgresService } from "./storage/postgres.service";
+import { SystemEventService } from "./system-event.service";
 
 export interface DigestItem {
   threadId: string;
@@ -32,10 +35,17 @@ export class OrganizerService {
   private readonly baseUrl: string;
   private readonly model: string;
   private readonly timeoutMs: number;
+  private _isRunning = false;
+
+  /** Whether the organizer is currently processing missives. */
+  get isRunning(): boolean {
+    return this._isRunning;
+  }
 
   constructor(
     private readonly storage: StorageService,
-    private readonly pg: PostgresService
+    private readonly pg: PostgresService,
+    private readonly events: SystemEventService
   ) {
     this.baseUrl =
       process.env.LM_STUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1";
@@ -46,32 +56,94 @@ export class OrganizerService {
 
   /**
    * Process all unclassified missives: classify, tag, move to folders.
+   * Also catches missives that were classified but never moved to the correct folder
+   * (e.g. due to a bug in an older version of the classifier).
    * Uses batch AI for efficiency.
    */
   async processNewMissives(limit = 20): Promise<number> {
-    // Find missives without classification
-    const { rows } = await this.pg.query(
-      `SELECT * FROM missives WHERE (classification IS NULL OR classification = '') AND channel = 'email' ORDER BY received_at DESC LIMIT $1`,
-      [limit]
-    );
+    if (this._isRunning) return 0;
+    this._isRunning = true;
+    try {
+      // Find missives without classification, or those classified as "other" that never got folder-mapped
+      const { rows } = await this.pg.query(
+        `SELECT * FROM missives WHERE channel = 'email'
+         AND (
+           (classification IS NULL OR classification = '')
+           OR (classification = 'other' AND folder = 'inbox')
+         )
+         ORDER BY received_at DESC LIMIT $1`,
+        [limit]
+      );
 
-    if (rows.length === 0) return 0;
+      if (rows.length === 0) return 0;
 
-    // Batch classify all at once
-    const results = await this.batchClassify(rows);
-    let processed = 0;
+      // Batch classify all at once (on decrypted subject/sender/body)
+      const results = await this.batchClassify(await openRows("missives", rows));
+      let processed = 0;
 
-    for (const result of results) {
-      if (result) {
-        await this.applyClassification(result.missiveId, result.threadId, result);
-        processed++;
+      for (const result of results) {
+        if (result) {
+          await this.applyClassification(result.missiveId, result.threadId, result);
+          // Clear rules evaluator so rules based on classification re-trigger
+          await this.pg.query(
+            "UPDATE missives SET rules_evaluated_at = NULL WHERE id = $1",
+            [result.missiveId]
+          );
+          processed++;
+        }
       }
-    }
 
-    if (processed > 0) {
-      this.logger.log(`Organizer classified ${processed} missive(s)`);
+      // Also fix orphaned missives that were classified but never moved to the right folder
+      const { rows: orphaned } = await this.pg.query(
+        `SELECT id, thread_id, classification FROM missives
+         WHERE classification IS NOT NULL AND classification != '' AND folder = 'inbox'
+         AND classification IN ('invoice', 'complaint', 'lead', 'support', 'personal', 'newsletter', 'meeting', 'spam', 'other')
+         LIMIT $1`,
+        [limit]
+      );
+      for (const row of orphaned) {
+        const targetFolder = classificationToFolder(row.classification);
+        if (targetFolder && targetFolder !== "inbox") {
+          await this.pg.query(
+            "UPDATE missives SET folder = $1, updated_at = NOW() WHERE id = $2",
+            [targetFolder, row.id]
+          );
+          await this.pg.query(
+            "UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2 AND folder = 'inbox'",
+            [targetFolder, row.thread_id]
+          );
+        }
+      }
+      if (orphaned.length > 0) {
+        this.logger.log(`Organizer fixed ${orphaned.length} orphaned missive(s) moved to correct folders`);
+      }
+
+      // Fix previously mis-archived notifications — bring them back to inbox
+      const { rows: misarchived } = await this.pg.query(
+        `UPDATE missives SET folder = 'inbox', updated_at = NOW()
+         WHERE folder = 'archived' AND classification = 'notification'
+         RETURNING id`
+      );
+      if (misarchived.length > 0) {
+        this.logger.log(`Organizer moved ${misarchived.length} mis-archived notification(s) back to inbox`);
+      }
+
+      if (processed > 0) {
+        this.logger.log(`Organizer classified ${processed} missive(s)`);
+        this.events.emit("organizer", `Classified **${processed}** message(s) into folders.`);
+      }
+
+      // Emit events for other fixes
+      if (orphaned.length > 0) {
+        this.events.emit("organizer", `Fixed **${orphaned.length}** previously misclassified message(s) — moved to correct folders.`);
+      }
+      if (misarchived.length > 0) {
+        this.events.emit("organizer", `Moved **${misarchived.length}** notification(s) back to inbox (previously mis-archived).`);
+      }
+      return processed + orphaned.length;
+    } finally {
+      this._isRunning = false;
     }
-    return processed;
   }
 
   /**
@@ -92,7 +164,7 @@ export class OrganizerService {
 
     // Get missives since last digest
     const { rows } = await this.pg.query(
-      `SELECT m.id, m.thread_id, m.subject, m.sender_name, m.sender_address,
+      `SELECT m.id, m.owner_id, m.thread_id, m.subject, m.sender_name, m.sender_address,
               m.body, m.classification, m.folder, m.created_at
        FROM missives m
        WHERE m.created_at > $1
@@ -105,7 +177,7 @@ export class OrganizerService {
 
     // Build the digest via AI
     const items: DigestItem[] = [];
-    const summary = await this.buildDigestSummary(rows, items);
+    const summary = await this.buildDigestSummary(await openRows("missives", rows), items);
 
     const id = `digest_${Date.now()}`;
     await this.pg.query(
@@ -113,8 +185,8 @@ export class OrganizerService {
        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
       [
         id,
-        summary,
-        JSON.stringify(items),
+        await seal("digests", "summary", summary),
+        await sealJson("digests", "items", items),
         since,
         periodEnd,
         rows.length,
@@ -123,12 +195,20 @@ export class OrganizerService {
 
     this.logger.log(`Digest generated: ${rows.length} missives`);
 
+    // Emit the full summary as a system event
+    const topItems = items
+      .filter((i) => i.importance === "high" || i.importance === "medium")
+      .slice(0, 4)
+      .map((i) => `- **${i.subject}** (${i.sender}) — ${i.reason}`)
+      .join("\n");
+    this.events.emit("digest", `### AI Summary\n${summary}\n\n${topItems ? `**Key items:**\n${topItems}` : ""}`);
+
     // Fetch the saved digest to return
     const saved = await this.pg.query(
       "SELECT * FROM digests WHERE id = $1",
       [id]
     );
-    return saved.rows.length > 0 ? rowToDigest(saved.rows[0]) : null;
+    return saved.rows.length > 0 ? rowToDigest(await openRow("digests", saved.rows[0])) : null;
   }
 
   /** Get the latest digest */
@@ -136,7 +216,7 @@ export class OrganizerService {
     const { rows } = await this.pg.query(
       "SELECT * FROM digests ORDER BY created_at DESC LIMIT 1"
     );
-    return rows.length > 0 ? rowToDigest(rows[0]) : null;
+    return rows.length > 0 ? rowToDigest(await openRow("digests", rows[0])) : null;
   }
 
   /** List recent digests */
@@ -145,7 +225,7 @@ export class OrganizerService {
       "SELECT * FROM digests ORDER BY created_at DESC LIMIT $1",
       [limit]
     );
-    return rows.map(rowToDigest);
+    return (await openRows("digests", rows)).map(rowToDigest);
   }
 
   // ── Private helpers ──
@@ -175,11 +255,14 @@ IDX0 classification=folder|reason
 IDX1 classification=folder|reason
 
 Where classification is one of: invoice, support, newsletter, notification, meeting, personal, spam, other
-And folder is one of: inbox, archive, unknown
+And folder is one of: inbox, invoices, complaints, leads, support, personal, archived
+
+If the email is an invoice, set folder=invoices. If it's a support request, set folder=support. If it's a lead, set folder=leads. If it's personal, set folder=personal. For newsletters/meetings/spam/other, set folder=archived. For notifications, set folder=inbox — notifications (e.g. from GitHub, Jira, CI tools) can be actionable and should stay in the inbox.
 
 Example:
-IDX0 newsletter=archive|weekly newsletter
-IDX1 invoice=archive|payment receipt`;
+IDX0 newsletter=archived|weekly newsletter
+IDX1 invoice=invoices|payment receipt
+IDX2 support=support|customer refund request`;
 
     try {
       const response = await fetch(
@@ -225,16 +308,19 @@ IDX1 invoice=archive|payment receipt`;
         if (line) {
           const parts = line.split(/[=|\|]/);
           if (parts.length >= 2) {
-            const cls = parts[1]?.trim().toLowerCase() ?? "";
-            const valid = ["invoice", "support", "newsletter", "notification", "meeting", "personal", "spam", "other"];
-            if (valid.includes(cls)) {
-              fallback.classification = cls;
-            }
-            if (parts.length >= 3) {
-              const f = parts[2]?.trim().toLowerCase();
-              if (f === "inbox" || f === "archive") {
-                fallback.folder = f;
+            // parts[0] = "IDX0 invoice", parts[1] = "invoices", parts[2] = "reason"
+            const clsMatch = parts[0]?.match(/IDX\d+\s+(\w+)/);
+            if (clsMatch) {
+              const cls = clsMatch[1].trim().toLowerCase();
+              const valid = ["invoice", "support", "newsletter", "notification", "meeting", "personal", "spam", "other"];
+              if (valid.includes(cls)) {
+                fallback.classification = cls;
               }
+            }
+            const f = parts[1]?.trim().toLowerCase();
+            const validFolders = ["inbox", "invoices", "complaints", "leads", "support", "personal", "archived"];
+            if (validFolders.includes(f)) {
+              fallback.folder = f;
             }
           }
           return fallback;
@@ -252,7 +338,7 @@ IDX1 invoice=archive|payment receipt`;
 
         // Heuristic: newsletter-like subjects
         if (r.subject && /newsletter|weekly|digest|alert|notification|price.?drop|security|unusual|sign.?in/i.test(r.subject)) {
-          if (/security|unusual|sign.?in/i.test(r.subject)) {
+          if (/security|unusual|sign.?in|github|pull.?request|review|ci|deploy|build|action|workflow/i.test(r.subject)) {
             fallback.classification = "notification";
           } else if (/price.?drop|deal|offer|sale/i.test(r.subject)) {
             fallback.classification = "newsletter";
@@ -275,7 +361,7 @@ IDX1 invoice=archive|payment receipt`;
       this.logger.log(`Batch classified ${results.length} missives (AI heuristic)`);
       return results;
     } catch (err) {
-      this.logger.error(`Batch classify error: ${err}`);
+      this.logger.error(`Batch classify error: ${safeError(err)}`);
       return rows.map((r) => ({
         missiveId: r.id,
         threadId: r.thread_id,
@@ -296,15 +382,19 @@ IDX1 invoice=archive|payment receipt`;
       [result.classification, missiveId]
     );
 
-    // Move to folder if suggested
-    if (result.folder) {
+    // Map classification to actual folder
+    const classificationFolder = classificationToFolder(result.classification);
+
+    // Move to folder: prefer the mapped folder from classification, fall back to AI's suggestion
+    const targetFolder = result.folder ?? classificationFolder;
+    if (targetFolder && targetFolder !== "inbox") {
       await this.pg.query(
         "UPDATE missives SET folder = $1, updated_at = NOW() WHERE id = $2",
-        [result.folder, missiveId]
+        [targetFolder, missiveId]
       );
       await this.pg.query(
         "UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2 AND folder = 'inbox'",
-        [result.folder, threadId]
+        [targetFolder, threadId]
       );
     }
   }
@@ -439,4 +529,21 @@ function rowToDigest(row: any): Digest {
     missiveCount: row.missive_count,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
   };
+}
+
+/** Map a classification string to a folder slug */
+function classificationToFolder(classification: string): string | null {
+  const map: Record<string, string> = {
+    invoice: "invoices",
+    complaint: "complaints",
+    lead: "leads",
+    support: "support",
+    personal: "personal",
+    notification: "inbox",
+    newsletter: "archived",
+    meeting: "archived",
+    spam: "archived",
+    other: "archived",
+  };
+  return map[classification?.toLowerCase()] ?? null;
 }

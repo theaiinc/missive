@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { MissiveController } from "./missive.controller";
 import { ConnectorController } from "./connector.controller";
@@ -15,12 +15,26 @@ import { SyncScheduler } from "./sync-scheduler";
 import { ConnectorStore } from "./connector.store";
 import { OrganizerService } from "./organizer.service";
 import { DigestController } from "./digest.controller";
+import { SystemEventService } from "./system-event.service";
+import { SystemEventController } from "./system-event.controller";
 import { StorageModule } from "./storage/storage.module";
+import { AuthController } from "./auth/auth.controller";
+import { AuthMiddleware } from "./auth/auth.middleware";
+import { UsersService } from "./users.service";
+import { MailboxService } from "./mailbox.service";
+import { EncryptionBackfillService } from "./encryption-backfill.service";
+import { MailboxController } from "./mailbox.controller";
+import { InviteController } from "./invite.controller";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController],
-  providers: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService],
-  exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService],
+  controllers: [AuthController, MailboxController, InviteController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController],
+  providers: [UsersService, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService],
+  exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /** Every route needs an Aegis session except sign-in, health and inbound mail (see AuthMiddleware). */
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthMiddleware).forRoutes("*");
+  }
+}

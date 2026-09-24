@@ -17,17 +17,20 @@ missive/
 ## Architecture Boundary
 
 **Missive owns:**
+
 - Raw communication ingest, normalize, serve
 - Full-text search over raw communications
 - AI summary & classification
 - Entity extraction (results emitted as events)
 
 **Pathway owns:**
+
 - Orchestration & event routing
 - Graph store (entities, relationships)
 - Memory store (thread memory, decisions, org memory)
 
 **Cognition owns:**
+
 - Agent reasoning & decision making
 - Action execution & agent state
 - Decision logs & execution traces
@@ -52,18 +55,21 @@ pnpm dev
 ## Development Conventions
 
 ### Code Style
+
 - TypeScript strict mode enabled
 - Prefer `zod` for runtime validation
 - Use `@theaiinc/missive-core` types across all packages
 - No barrel exports except `index.ts`
 
 ### Naming
+
 - **Packages:** `@theaiinc/missive-{name}`
 - **Classes:** PascalCase
 - **Functions/Variables:** camelCase
 - **Files:** kebab-case for modules, PascalCase for components
 
 ### API Design
+
 - RESTful endpoints under `/api/v1/`
 - JSON request/response bodies
 - Search: `GET /api/v1/search?query=...`
@@ -71,21 +77,30 @@ pnpm dev
 - Events emitted via `@nestjs/event-emitter`
 
 ### Database
+
 - Migrations in `packages/backend/src/storage/migrations/`
 - Naming: `{sequence}_{description}.sql`
 - Missive only stores raw comms data + sync state + events
 
 ### Connector Pattern
+
 ```typescript
 class XxxConnector extends BaseConnector {
-  readonly provider = "xxx";
-  async connect(config) { /* OAuth / API key */ }
-  async sync()           { /* Fetch and convert */ }
-  async send(payload)    { /* Send via provider API */ }
+  readonly provider = 'xxx';
+  async connect(config) {
+    /* OAuth / API key */
+  }
+  async sync() {
+    /* Fetch and convert */
+  }
+  async send(payload) {
+    /* Send via provider API */
+  }
 }
 ```
 
 ## PR Checklist
+
 - [ ] Types are updated in `@theaiinc/missive-core`
 - [ ] No entity/graph/memory storage added (those belong to Pathway)
 - [ ] API endpoint follows existing patterns

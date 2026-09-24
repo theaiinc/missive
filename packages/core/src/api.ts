@@ -7,7 +7,7 @@ import type { Missive, Thread, EntityReference, RuleProposal } from "./types";
 // ──────────────────────────────────────────────
 
 export interface SearchQuery {
-  query: string;
+  query?: string;
   channel?: string;
   provider?: string;
   from?: string;
@@ -15,6 +15,8 @@ export interface SearchQuery {
   after?: string;
   before?: string;
   folder?: string;
+  organization?: string;
+  project?: string;
   limit?: number;
   offset?: number;
 }

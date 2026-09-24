@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun } from "lucide-react";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -8,9 +8,12 @@ import type { Folder } from "@theaiinc/missive-core";
 import { useState } from "react";
 import { ChatWidget } from "./ChatWidget";
 import { Toaster } from "sonner";
-import { useNotifications } from "@/hooks/useNotifications";
-import { NotificationPanel } from "./NotificationPanel";
 import { useTheme } from "@/hooks/useTheme";
+import { useOrganizerStatus } from "@/hooks/useOrganizerStatus";
+import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
+import { useMe } from "@/hooks/useMe";
+import { ClaimMailbox } from "@/components/ClaimMailbox";
+import { ComposeProvider, useCompose } from "./Compose";
 
 const folderIcons: Record<string, React.ElementType> = {
   inbox: InboxIcon,
@@ -20,9 +23,11 @@ const folderIcons: Record<string, React.ElementType> = {
   "user-plus": UserPlus,
   "life-buoy": LifeBuoy,
   user: User,
+  send: Send,
 };
 
 const navItems = [
+  { to: "/rules", label: "Rules", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -32,6 +37,20 @@ async function fetchFolders(): Promise<Folder[]> {
 }
 
 export function Layout() {
+  return (
+    <ComposeProvider>
+      <LayoutShell />
+    </ComposeProvider>
+  );
+}
+
+function initials(name: string) {
+  return name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+}
+
+function LayoutShell() {
+  const { data: me } = useMe();
+  const compose = useCompose();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const activeFolder = searchParams.get("folder") ?? "inbox";
@@ -43,17 +62,9 @@ export function Layout() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
-  const {
-    notifications,
-    unreadCount,
-    digest,
-    digestLoaded,
-    markAllRead,
-    dismissNotification,
-    markRead,
-  } = useNotifications();
-
   const { theme, toggleTheme } = useTheme();
+  const organizerRunning = useOrganizerStatus();
+  useSystemEventPoller();
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
@@ -74,10 +85,10 @@ export function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar */}
-      <aside className="w-56 border-r border-border bg-card flex flex-col">
-        <div className="p-5">
+      <div className="flex h-screen bg-background">
+        {/* Sidebar */}
+        <aside className="w-56 border-r border-border bg-card flex flex-col">
+        <div className="px-5 py-4">
           <button
             onClick={() => navigate("/inbox")}
             className="flex items-center gap-2.5"
@@ -86,17 +97,26 @@ export function Layout() {
               <Mail className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-base font-semibold text-foreground">
+              <h1 className="text-sm font-semibold text-foreground">
                 Missive
               </h1>
-              <p className="text-[11px] text-muted-foreground leading-tight">
-                Communication Intelligence
-              </p>
             </div>
           </button>
         </div>
 
         <Separator />
+
+        {me && me.mailboxes.length > 0 && (
+          <div className="px-3 pt-3">
+            <button
+              onClick={() => compose()}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              <PenSquare className="w-4 h-4" />
+              Compose
+            </button>
+          </div>
+        )}
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {/* Folder list — first item is the inbox folder */}
@@ -193,33 +213,36 @@ export function Layout() {
           <div className="flex items-center gap-3 px-3 py-2">
             <Avatar className="h-8 w-8">
               <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                ST
+                {me ? initials(me.name ?? me.email) : ""}
               </AvatarFallback>
             </Avatar>
-            <div className="text-sm leading-tight">
-              <p className="font-medium text-foreground">Steve Tran</p>
-              <p className="text-xs text-muted-foreground">theaiinc</p>
+            <div className="text-sm leading-tight min-w-0 flex-1">
+              <p className="font-medium text-foreground truncate">{me?.name ?? me?.email ?? ""}</p>
+              <p className="text-xs text-muted-foreground truncate">{me?.mailboxes[0]?.address ?? me?.email ?? ""}</p>
             </div>
+            {me?.accountUrl && (
+              <a href={me.accountUrl} target="_blank" rel="noopener noreferrer" title="Account & security: password, passkeys" aria-label="Account and security" className="text-muted-foreground hover:text-foreground">
+                <KeyRound className="w-4 h-4" />
+              </a>
+            )}
+            <a href="/auth/logout" title="Sign out" aria-label="Sign out" className="text-muted-foreground hover:text-foreground">
+              <LogOut className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-hidden flex flex-col">
-        {/* Top bar with notification bell */}
-        <div className="h-10 border-b border-border bg-card flex items-center justify-end px-4 flex-shrink-0">
-          <NotificationPanel
-            notifications={notifications}
-            unreadCount={unreadCount}
-            digest={digest}
-            digestLoaded={digestLoaded}
-            markAllRead={markAllRead}
-            dismissNotification={dismissNotification}
-            markRead={markRead}
-          />
-        </div>
+      <main className="flex-1 overflow-hidden flex flex-col relative">
+        {/* Organizer activity indicator */}
+        {organizerRunning && (
+          <div className="absolute top-0 left-0 right-0 z-50 h-[2px] overflow-hidden">
+            <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-primary to-transparent animate-pulse" />
+          </div>
+        )}
         <div className="flex-1 overflow-hidden">
-          <Outlet />
+          {/* A blank account's first visit: pick the hosted mailbox address first. */}
+          {me?.mailboxOffer ? <ClaimMailbox domain={me.mailboxOffer.domain} /> : <Outlet />}
         </div>
       </main>
 

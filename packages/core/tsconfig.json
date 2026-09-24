@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // DOM supplies the WebCrypto types (CryptoKey, subtle) crypto.ts needs; the
+    // same API exists in Node 20+ and Workers.
+    "lib": ["ES2022", "DOM"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/__tests__"]
 }
