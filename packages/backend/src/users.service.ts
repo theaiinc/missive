@@ -61,6 +61,28 @@ export class UsersService {
     return rows[0] ? rowToUser(rows[0]) : null;
   }
 
+  /** Records the Aegis client (so the organization) someone signed in through. */
+  async setClient(userId: string, clientId: string): Promise<void> {
+    await this.pg.systemQuery(`UPDATE users SET aegis_client = $2 WHERE id = $1`, [userId, clientId]);
+  }
+
+  /** Everyone, for the admin console: who they are, their organization, and their mailboxes. */
+  async directory(): Promise<{ id: string; email: string; name?: string; client: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[] }[]> {
+    const { rows } = await this.pg.systemQuery(`SELECT id, email, name, aegis_client, aegis_sub, last_login_at FROM users`);
+    const people = await Promise.all(
+      rows.map(async (r: any) => ({
+        id: r.id,
+        email: (await openIdentity("users.email", r.email))!,
+        name: (await openIdentity("users.name", r.name)) ?? undefined,
+        client: r.aegis_client ?? null,
+        signedIn: !!r.aegis_sub,
+        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : null,
+        mailboxes: (await this.mailboxesOf(r.id)).map((m) => m.address),
+      })),
+    );
+    return people.sort((a, b) => a.email.localeCompare(b.email));
+  }
+
   /** Everyone, for background jobs that run once per user. */
   async all(): Promise<RequestUser[]> {
     const { rows } = await this.pg.systemQuery(`SELECT id, email, name FROM users ORDER BY created_at`);
@@ -109,10 +131,12 @@ export class UsersService {
     return connected.rows.length ? null : domain;
   }
 
-  /** Taken by a mailbox, or reserved by an open invitation. */
+  /** Taken by a mailbox or a group, or reserved by an open invitation. */
   async addressTaken(address: string): Promise<boolean> {
     const { rows } = await this.pg.systemQuery(
       `SELECT 1 FROM mailboxes WHERE address_bidx = $1
+       UNION ALL
+       SELECT 1 FROM mail_groups WHERE address_bidx = $1
        UNION ALL
        SELECT 1 FROM mailbox_invites WHERE address_bidx = $1 AND claimed_at IS NULL AND expires_at > NOW()`,
       [await addressIndex("mailboxes.address", address)],
@@ -123,6 +147,9 @@ export class UsersService {
   /** Creates the hosted mailbox (address stored encrypted) and clears the offer. Null if the address was just taken. */
   async createMailbox(userId: string, address: string, domain: string, displayName?: string): Promise<Mailbox | null> {
     const lower = normalizeAddress(address);
+    // A group owns this address.
+    const group = await this.pg.systemQuery(`SELECT 1 FROM mail_groups WHERE address_bidx = $1`, [await addressIndex("mailboxes.address", lower)]);
+    if (group.rows.length) return null;
     const { rows } = await this.pg.systemQuery(
       `INSERT INTO mailboxes (address, address_bidx, domain, user_id, display_name)
        VALUES ($1, $2, $3, $4, $5)

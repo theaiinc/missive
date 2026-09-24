@@ -7,6 +7,7 @@ import type { Missive, Thread } from "@theaiinc/missive-core";
 import { StorageService } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { UsersService, type Mailbox } from "./users.service";
+import { GroupsService } from "./groups.service";
 import { requireUser } from "./request-context";
 
 /**
@@ -46,7 +47,8 @@ export class MailboxService {
     private readonly storage: StorageService,
     private readonly rules: RuleService,
     private readonly users: UsersService,
-    private readonly events: EventEmitter2
+    private readonly events: EventEmitter2,
+    private readonly groups: GroupsService
   ) {}
 
   /** Ids are derived from the owner and Message-ID, so a redelivered message is stored once. */
@@ -127,8 +129,10 @@ export class MailboxService {
   async send(mail: OutgoingMail): Promise<Missive> {
     const user = requireUser();
     const from = mail.from.toLowerCase();
-    const mailbox = (await this.users.mailboxesOf(user.id)).find((m) => m.address === from);
-    if (!mailbox) throw new SendError("You can only send from your own mailboxes.");
+    // Your own mailbox, or a group you own or moderate.
+    const mailbox = (await this.groups.addressesOf(user.id)).find((m) => m.address === from);
+    if (!mailbox) throw new SendError("You can only send from your own mailboxes and groups.");
+    if (mailbox.kind === "group" && mailbox.role === "member") throw new SendError(`Only owners and moderators can send as ${from}.`);
 
     // Threading: reply to the original's Message-ID and carry its thread root.
     let inReplyTo: string | undefined;

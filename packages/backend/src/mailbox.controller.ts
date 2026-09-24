@@ -3,6 +3,7 @@ import type { Request } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { MailboxService, SendError } from "./mailbox.service";
 import { UsersService } from "./users.service";
+import { GroupsService } from "./groups.service";
 import { requireUser, runAsUser } from "./request-context";
 import { localPartProblem, normalizeLocalPart } from "./mailbox-claim";
 
@@ -21,7 +22,8 @@ function bearerMatches(header: string | undefined, secret: string | undefined): 
 export class MailboxController {
   constructor(
     private readonly mail: MailboxService,
-    private readonly users: UsersService
+    private readonly users: UsersService,
+    private readonly groups: GroupsService
   ) {}
 
   @Get("health")
@@ -39,13 +41,25 @@ export class MailboxController {
   async inbound(@Req() req: Request) {
     if (!bearerMatches(req.headers.authorization, process.env.INBOUND_SECRET)) throw new UnauthorizedException();
     const to = String(req.headers["x-envelope-to"] ?? "").toLowerCase();
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new BadRequestException("Send the raw message as message/rfc822");
+    const from = String(req.headers["x-envelope-from"] ?? "");
     const mailbox = to ? await this.users.mailbox(to) : null;
-    if (!mailbox) throw new NotFoundException("No such mailbox");
+    if (!mailbox) {
+      // A group: every member gets it in their own inbox, filed under the group's address.
+      const group = to ? await this.groups.byAddress(to) : null;
+      const members = group ? await this.groups.recipients(group.id) : [];
+      if (!group || !members.length) throw new NotFoundException("No such mailbox");
+      let stored = 0;
+      for (const member of members) {
+        const copy = { address: group.address, domain: group.domain, userId: member.id, displayName: group.name };
+        if (await runAsUser(member, () => this.mail.receive(req.body as Buffer, copy, from))) stored++;
+      }
+      return { stored: stored > 0, members: members.length };
+    }
     const owner = await this.users.byId(mailbox.userId);
     if (!owner) throw new NotFoundException("No such mailbox");
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new BadRequestException("Send the raw message as message/rfc822");
     const stored = await runAsUser(owner, () =>
-      this.mail.receive(req.body as Buffer, mailbox, String(req.headers["x-envelope-from"] ?? ""))
+      this.mail.receive(req.body as Buffer, mailbox, from)
     );
     return { stored };
   }

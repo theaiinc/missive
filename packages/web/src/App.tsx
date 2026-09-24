@@ -5,6 +5,7 @@ import { ThreadView } from "./pages/ThreadView";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { Rules } from "./pages/Rules";
+import { Admin } from "./pages/Admin";
 import { OAuthCallback } from "./pages/OAuthCallback";
 import { ChatProvider } from "./hooks/useChat";
 import { NotificationProvider } from "./hooks/useNotificationContext";
@@ -22,6 +23,7 @@ export function App() {
             <Route path="/search" element={<Search />} />
             <Route path="/rules" element={<Rules />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/admin" element={<Admin />} />
           </Route>
         </Routes>
       </NotificationProvider>

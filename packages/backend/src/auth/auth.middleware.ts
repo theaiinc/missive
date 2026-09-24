@@ -5,7 +5,7 @@ import { UsersService } from "../users.service";
 import { SESSION_COOKIE, readCookie, unseal, type Session } from "./session";
 
 /** Routes that don't need a signed-in user (they check their own credentials). */
-const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/, /^\/api\/v1\/admin\//];
+const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/];
 
 /**
  * Every other request needs an Aegis session and runs as that user, which is
@@ -34,6 +34,8 @@ export class AuthMiddleware implements NestMiddleware {
   async use(req: Request, res: Response, next: NextFunction) {
     const path = req.originalUrl.split("?")[0] ?? "";
     if (PUBLIC.some((p) => p.test(path))) return next();
+    // Creating an invitation with the admin token (scripts); the console uses an admin session instead.
+    if (path === "/api/v1/admin/mailbox-invites" && req.headers.authorization?.startsWith("Bearer ")) return next();
 
     const session = unseal<Session>(readCookie(req.headers.cookie, SESSION_COOKIE));
     let user: RequestUser | null = session ? await this.userFor(session.userId) : null;

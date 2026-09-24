@@ -2,6 +2,8 @@ import { Controller, Get, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { createPublicKey, verify as verifySignature, type JsonWebKey } from "node:crypto";
 import { UsersService } from "../users.service";
+import { GroupsService } from "../groups.service";
+import { isAdmin } from "../admin.controller";
 import { requireUser } from "../request-context";
 import {
   SESSION_COOKIE, STATE_COOKIE, INVITE_COOKIE, SESSION_HOURS,
@@ -59,7 +61,10 @@ const safeReturn = (value: unknown) =>
 
 @Controller()
 export class AuthController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly groups: GroupsService,
+  ) {}
 
   @Get("auth/login")
   login(@Req() req: Request, @Res() res: Response) {
@@ -126,6 +131,8 @@ export class AuthController {
     } catch {
       return res.status(403).type("html").send(`<p>${claims.email.replace(/[<>&"]/g, "")} is already linked to another Aegis account.</p>`);
     }
+    // Their organization: the Aegis client (tenant) they came in through.
+    await this.users.setClient(user.id, site.clientId);
     // Refreshed on every sign-in: the offer follows what Aegis says now.
     await this.users.setMailboxOffer(user.id, typeof claims.mailbox_domain === "string" ? claims.mailbox_domain.toLowerCase() : null);
     // Came in through a mailbox invitation: that address is theirs now (once).
@@ -158,12 +165,14 @@ export class AuthController {
   @Get("api/v1/me")
   async me(@Req() req: Request) {
     const user = requireUser();
-    const [mailboxes, offerDomain] = await Promise.all([this.users.mailboxesOf(user.id), this.users.mailboxOffer(user.id)]);
+    // Their own mailboxes, then the groups they're in (kind, role).
+    const [mailboxes, offerDomain] = await Promise.all([this.groups.addressesOf(user.id), this.users.mailboxOffer(user.id)]);
     return {
       id: user.id, email: user.email, name: user.name, mailboxes, mailboxOffer: offerDomain ? { domain: offerDomain } : null,
       // Password, passkeys and two-step sign-in live in Aegis (a passkey has to
       // be registered on Aegis's own origin); client_id picks this site's tenant.
       accountUrl: aegisAccountUrl(siteFor(req)),
+      isAdmin: isAdmin(user.email),
     };
   }
 }

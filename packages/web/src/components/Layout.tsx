@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound } from "lucide-react";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,7 @@ import { Toaster } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 import { useOrganizerStatus } from "@/hooks/useOrganizerStatus";
 import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
-import { useMe } from "@/hooks/useMe";
+import { canSendAs, useMe } from "@/hooks/useMe";
 import { ClaimMailbox } from "@/components/ClaimMailbox";
 import { ComposeProvider, useCompose } from "./Compose";
 
@@ -106,7 +106,7 @@ function LayoutShell() {
 
         <Separator />
 
-        {me && me.mailboxes.length > 0 && (
+        {me && me.mailboxes.some(canSendAs) && (
           <div className="px-3 pt-3">
             <button
               onClick={() => compose()}
@@ -205,6 +205,20 @@ function LayoutShell() {
               </NavLink>
             );
           })}
+          {me?.isAdmin && (
+            <NavLink
+              to="/admin"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                )
+              }
+            >
+              <ShieldCheck className="w-4 h-4" />
+              Admin console
+            </NavLink>
+          )}
         </nav>
 
         <Separator />
@@ -218,7 +232,7 @@ function LayoutShell() {
             </Avatar>
             <div className="text-sm leading-tight min-w-0 flex-1">
               <p className="font-medium text-foreground truncate">{me?.name ?? me?.email ?? ""}</p>
-              <p className="text-xs text-muted-foreground truncate">{me?.mailboxes[0]?.address ?? me?.email ?? ""}</p>
+              <p className="text-xs text-muted-foreground truncate">{me?.mailboxes.find((m) => m.kind !== "group")?.address ?? me?.email ?? ""}</p>
             </div>
             {me?.accountUrl && (
               <a href={me.accountUrl} target="_blank" rel="noopener noreferrer" title="Account & security: password, passkeys" aria-label="Account and security" className="text-muted-foreground hover:text-foreground">

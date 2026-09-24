@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useMe } from "@/hooks/useMe";
+import { canSendAs, useMe } from "@/hooks/useMe";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
 export type Draft = { from?: string; to?: string; cc?: string; subject?: string; text?: string; replyTo?: string };
@@ -30,7 +30,7 @@ const label = "text-xs font-medium text-muted-foreground";
 function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
   const { data: me } = useMe();
   const queryClient = useQueryClient();
-  const mailboxes = me?.mailboxes ?? [];
+  const mailboxes = (me?.mailboxes ?? []).filter(canSendAs);
   const [values, setValues] = useState({
     from: draft.from ?? mailboxes[0]?.address ?? "",
     to: draft.to ?? "",
@@ -90,7 +90,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             >
               {mailboxes.map((m) => (
                 <option key={m.address} value={m.address}>
-                  {m.displayName ? `${m.displayName} <${m.address}>` : m.address}
+                  {(m.displayName ? `${m.displayName} <${m.address}>` : m.address) + (m.kind === "group" ? " · group" : "")}
                 </option>
               ))}
             </select>
