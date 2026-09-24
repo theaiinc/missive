@@ -9,7 +9,7 @@ import { runAsUser } from "./request-context";
 const inviteHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
 /** The admin claims Aegis sends with scope "admin". */
-export type AegisRoleClaims = { roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown };
+export type AegisRoleClaims = { roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown; console_platform_admin?: unknown; console_managed_tenant_ids?: unknown };
 export type AdminScope = { platform: boolean; tenants: string[] };
 
 export type Mailbox = { address: string; domain: string; userId: string; displayName?: string };
@@ -68,16 +68,18 @@ export class UsersService {
   /**
    * Records what Aegis said at sign-in: the client (organization) and tenant
    * they came in through, and their admin rights. An ADMIN in their own
-   * tenant administers it; tenants they manage in Aegis count too.
+   * tenant administers it; tenants they manage in Aegis count too, and so do
+   * their Aegis console rights (scope "console": same person, console account).
    */
   async recordSignIn(userId: string, clientId: string, claims: AegisRoleClaims): Promise<void> {
     const home = typeof claims.home_tenant_id === "string" ? claims.home_tenant_id : null;
     const roles = Array.isArray(claims.roles) ? claims.roles.map(String) : typeof claims.role === "string" ? [claims.role] : [];
-    const managed = Array.isArray(claims.managed_tenant_ids) ? claims.managed_tenant_ids.map(String) : [];
+    const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+    const managed = [...list(claims.managed_tenant_ids), ...list(claims.console_managed_tenant_ids)];
     const adminTenants = [...new Set([...(home && roles.includes("ADMIN") ? [home] : []), ...managed])];
     await this.pg.systemQuery(
       `UPDATE users SET aegis_client = $2, aegis_tenant = $3, admin_tenants = $4, platform_admin = $5 WHERE id = $1`,
-      [userId, clientId, home, adminTenants, claims.platform_admin === true],
+      [userId, clientId, home, adminTenants, claims.platform_admin === true || claims.console_platform_admin === true],
     );
     if (home) {
       await this.pg.systemQuery(

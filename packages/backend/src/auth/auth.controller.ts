@@ -19,7 +19,7 @@ import { siteFor, type Site } from "./sites";
 const issuer = () => process.env.AEGIS_ISSUER ?? "https://id.theaiinc.com";
 const redirectUri = (site: Site) => `${site.appUrl}/auth/callback`;
 
-type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown ; roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown };
+type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown ; roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown; console_platform_admin?: unknown; console_managed_tenant_ids?: unknown };
 type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; clientId: string; exp: number };
 
 /** Checks the id_token's RS256 signature against Aegis's JWKS, then issuer, audience, expiry and nonce. */
@@ -84,8 +84,9 @@ export class AuthController {
       redirect_uri: redirectUri(site),
       response_type: "code",
       // "mailbox": Aegis adds mailbox_domain for a blank account that may claim a hosted mailbox.
-      // "admin": Aegis adds the person's roles and managed tenants (who may use the admin console).
-      scope: "openid email profile mailbox admin",
+      // "admin": the person's roles in their tenant; "console": their Aegis console
+      // rights (platform admin, managed tenants). Together: who may use the admin console.
+      scope: "openid email profile mailbox admin console",
       // "Try again" after a refused sign-in asks Aegis for the login again,
       // instead of reusing the Aegis session that was just refused.
       ...(req.query.prompt === "login" ? { prompt: "login" } : {}),
