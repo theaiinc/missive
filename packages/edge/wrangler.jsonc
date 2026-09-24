@@ -56,8 +56,10 @@
     // No AI model is hosted yet; see SyncScheduler.runOrganizer.
     "MISSIVE_ORGANIZER": "off"
   },
-  // mail.bugmole.com is also a custom domain of this Worker, attached in the
-  // dashboard: the deploy token has no access to the bugmole.com zone, and
-  // wrangler leaves custom domains it isn't told about alone.
-  "routes": [{ "pattern": "missive.theaiinc.com", "custom_domain": true }]
+  // Custom domains missive.theaiinc.com and mail.bugmole.com are attached to
+  // this Worker in Cloudflare (Workers → missive → Domains), not listed here.
+  // Listing any makes wrangler replace the whole set on every deploy, and it
+  // then also needs to read each zone's routes, which the deploy token can't
+  // for bugmole.com. With no routes, wrangler leaves the domains alone.
+  "routes": []
 }
