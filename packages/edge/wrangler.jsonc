@@ -40,6 +40,8 @@
     "bindings": [{ "name": "API", "class_name": "MissiveApi" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MissiveApi"] }],
+  // Keeps the API awake so connected accounts sync every minute (see scheduled()).
+  "triggers": { "crons": ["* * * * *"] },
   "send_email": [{ "name": "EMAIL" }],
   // Every inbound message is kept here first, so a message isn't lost if the
   // API is down; objects expire after 30 days (bucket lifecycle rule).

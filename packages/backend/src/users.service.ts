@@ -136,6 +136,23 @@ export class UsersService {
     return rowToMailbox(rows[0]);
   }
 
+  /**
+   * An account whose verified email is itself an address on a domain Missive
+   * hosts (an admin provisioned nhi.yen@bugmole.com in Aegis) gets that
+   * mailbox on sign-in. Only while the address is free (no mailbox, no open
+   * invitation) and the person has no hosted mailbox yet. Verification is
+   * what makes this safe: mail to an unclaimed hosted address doesn't reach
+   * whoever asks for it, so only an admin can vouch for one.
+   */
+  async provisionOwnAddress(userId: string, email: string, name?: string): Promise<Mailbox | null> {
+    const address = normalizeAddress(email);
+    const domain = address.split("@")[1] ?? "";
+    const hosted = await this.pg.systemQuery(`SELECT 1 FROM domains WHERE name = $1`, [domain]);
+    if (!hosted.rows.length) return null;
+    if ((await this.mailboxesOf(userId)).length || (await this.addressTaken(address))) return null;
+    return this.createMailbox(userId, address, domain, name);
+  }
+
   // ── Mailbox invitations (a link for one specific address) ──
 
   /**
