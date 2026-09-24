@@ -1,3 +1,4 @@
+import { safeError } from "./log-safe";
 import { Injectable, OnModuleInit, Logger } from "@nestjs/common";
 import { SyncService } from "./sync.service";
 import { ImapSyncService } from "./imap-sync.service";
@@ -50,7 +51,7 @@ export class SyncScheduler implements OnModuleInit {
         await runAsUser(user, job);
       }
     } catch (err) {
-      this.logger.error("Scheduled job error:", err);
+      this.logger.error("Scheduled job error:", safeError(err));
     }
   }
 
@@ -68,7 +69,7 @@ export class SyncScheduler implements OnModuleInit {
         syncMessage += `Synced **${gmailTotal}** new Gmail message(s). `;
       }
     } catch (err) {
-      this.logger.error("Auto-sync Gmail error:", err);
+      this.logger.error("Auto-sync Gmail error:", safeError(err));
     }
 
     try {
@@ -82,7 +83,7 @@ export class SyncScheduler implements OnModuleInit {
         syncMessage += `Synced **${outlookTotal}** new Outlook message(s). `;
       }
     } catch (err) {
-      this.logger.error("Auto-sync Outlook error:", err);
+      this.logger.error("Auto-sync Outlook error:", safeError(err));
     }
 
     try {
@@ -96,7 +97,7 @@ export class SyncScheduler implements OnModuleInit {
         syncMessage += `Synced **${imapTotal}** new IMAP message(s). `;
       }
     } catch (err) {
-      this.logger.error("Auto-sync IMAP error:", err);
+      this.logger.error("Auto-sync IMAP error:", safeError(err));
     }
 
     if (syncMessage) {
@@ -125,7 +126,7 @@ export class SyncScheduler implements OnModuleInit {
         await this.organizer.generateDigest();
       }
     } catch (err) {
-      this.logger.error("Organizer error:", err);
+      this.logger.error("Organizer error:", safeError(err));
     }
   }
 
@@ -147,7 +148,7 @@ export class SyncScheduler implements OnModuleInit {
         }
       }
     } catch (err) {
-      this.logger.error("Auto-rule evaluation error:", err);
+      this.logger.error("Auto-rule evaluation error:", safeError(err));
     }
   }
 

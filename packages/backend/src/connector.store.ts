@@ -1,3 +1,4 @@
+import { openForOwner, sealForCurrentUser } from "./data-cipher";
 import { Injectable } from "@nestjs/common";
 import { google, type Auth } from "googleapis";
 import { PostgresService } from "./storage/postgres.service";
@@ -246,7 +247,9 @@ export class ConnectorStore {
          credentials = EXCLUDED.credentials,
          updated_at = NOW()
        RETURNING *`,
-      [id, provider, data.label, data.email, JSON.stringify(data.tokens)]
+      // OAuth tokens and IMAP passwords are stored encrypted for their owner;
+      // the column holds a JSON string ("mv1.…") instead of the object.
+      [id, provider, data.label, data.email, JSON.stringify(await sealForCurrentUser(CREDENTIALS_AAD, JSON.stringify(data.tokens)))]
     );
     return rowToConnector(rows[0]);
   }
@@ -265,14 +268,14 @@ export class ConnectorStore {
       "SELECT * FROM connectors WHERE provider = $1 ORDER BY created_at ASC",
       [provider]
     );
-    return rows.map(rowToConnector);
+    return Promise.all(rows.map(rowToConnector));
   }
 
   async listAll(): Promise<StoredConnector[]> {
     const { rows } = await this.pg.query(
       "SELECT * FROM connectors ORDER BY provider, created_at ASC"
     );
-    return rows.map(rowToConnector);
+    return Promise.all(rows.map(rowToConnector));
   }
 
   async remove(id: string): Promise<void> {
@@ -291,10 +294,14 @@ export class ConnectorStore {
   }
 }
 
-function rowToConnector(row: any): StoredConnector {
+const CREDENTIALS_AAD = "connectors.credentials";
+
+async function rowToConnector(row: any): Promise<StoredConnector> {
+  // Encrypted rows hold a JSON string ("mv1.…"); rows from before encryption
+  // hold the object itself until the startup backfill rewrites them.
   const creds =
     typeof row.credentials === "string"
-      ? JSON.parse(row.credentials)
+      ? JSON.parse(await openForOwner(row.owner_id, CREDENTIALS_AAD, row.credentials))
       : row.credentials;
   return {
     id: row.id,

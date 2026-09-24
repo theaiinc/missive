@@ -22,12 +22,13 @@ import { AuthController } from "./auth/auth.controller";
 import { AuthMiddleware } from "./auth/auth.middleware";
 import { UsersService } from "./users.service";
 import { MailboxService } from "./mailbox.service";
+import { EncryptionBackfillService } from "./encryption-backfill.service";
 import { MailboxController } from "./mailbox.controller";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
   controllers: [AuthController, MailboxController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController],
-  providers: [UsersService, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService],
+  providers: [UsersService, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule implements NestModule {

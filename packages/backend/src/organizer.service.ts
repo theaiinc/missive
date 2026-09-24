@@ -1,3 +1,4 @@
+import { safeError } from "./log-safe";
 import { Injectable, Logger } from "@nestjs/common";
 import { StorageService } from "./storage/storage.service";
 import { PostgresService } from "./storage/postgres.service";
@@ -359,7 +360,7 @@ IDX2 support=support|customer refund request`;
       this.logger.log(`Batch classified ${results.length} missives (AI heuristic)`);
       return results;
     } catch (err) {
-      this.logger.error(`Batch classify error: ${err}`);
+      this.logger.error(`Batch classify error: ${safeError(err)}`);
       return rows.map((r) => ({
         missiveId: r.id,
         threadId: r.thread_id,

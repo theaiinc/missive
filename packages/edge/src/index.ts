@@ -1,4 +1,6 @@
 import { Container } from "@cloudflare/containers";
+// Bundled from source (the Worker has no build step for core); same format as the backend.
+import { DataCipher } from "../../core/src/crypto";
 
 // One API instance: it runs the sync scheduler, which must not run twice.
 const INSTANCE = "api";
@@ -19,6 +21,8 @@ export interface Env {
   AEGIS_CLIENT_SECRET: string;
   /** The Worker proves itself to the API with this when it hands over mail. */
   INBOUND_SECRET: string;
+  /** Master key for email data at rest (see core/src/crypto.ts). */
+  MISSIVE_DATA_KEY: string;
   /** The API proves itself to the Worker with this when it sends mail. */
   EDGE_SECRET: string;
   /** Optional: OAuth apps for connecting Gmail / Outlook accounts (Settings). Redirect: APP_URL/oauth. */
@@ -49,6 +53,7 @@ export class MissiveApi extends Container<Env> {
       AEGIS_CLIENT_SECRET: env.AEGIS_CLIENT_SECRET,
       SESSION_SECRET: env.SESSION_SECRET,
       INBOUND_SECRET: env.INBOUND_SECRET,
+      MISSIVE_DATA_KEY: env.MISSIVE_DATA_KEY,
       EDGE_URL: env.APP_URL,
       EDGE_SECRET: env.EDGE_SECRET,
       MISSIVE_ORGANIZER: env.MISSIVE_ORGANIZER ?? "",
@@ -127,9 +132,13 @@ export default {
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     const raw = await new Response(message.raw).arrayBuffer();
     const key = `inbound/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.eml`;
-    await env.INBOUND.put(key, raw, {
-      httpMetadata: { contentType: "message/rfc822" },
-      customMetadata: { to: message.to.toLowerCase(), from: message.from.toLowerCase() },
+    // Stored encrypted, bound to its key, with no addresses in the metadata.
+    // Throws (and Email Routing retries later) if the key isn't configured,
+    // rather than ever writing mail in the clear.
+    const sealed = await DataCipher.fromSecret(env.MISSIVE_DATA_KEY).encryptBytes("system:inbound", key, raw);
+    await env.INBOUND.put(key, sealed, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { encryption: "mv1", scope: "system:inbound" },
     });
     const response = await api(env).fetch(
       new Request(`${env.APP_URL}/api/v1/inbound`, {
@@ -150,6 +159,6 @@ export default {
     }
     // Anything else is our problem, not the sender's: the copy stays in R2
     // (key in the log) and the error makes Email Routing report a failure.
-    if (!response.ok) throw new Error(`API refused mail for ${message.to} (${response.status}); kept as ${key}`);
+    if (!response.ok) throw new Error(`API refused inbound mail (${response.status}); kept encrypted as ${key}`);
   },
 } satisfies ExportedHandler<Env>;

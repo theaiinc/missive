@@ -6,7 +6,11 @@ export const SESSION_COOKIE = "missive_session";
 export const STATE_COOKIE = "missive_oidc";
 export const SESSION_HOURS = 12;
 
-export type Session = { userId: string; email: string; name?: string; exp: number };
+/**
+ * Only ids and an expiry: the cookie is signed, not encrypted, so it must not
+ * carry the person's email or name (the request looks those up instead).
+ */
+export type Session = { userId: string; exp: number };
 
 const b64url = (buf: Buffer) => buf.toString("base64url");
 
