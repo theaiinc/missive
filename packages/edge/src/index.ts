@@ -94,6 +94,8 @@ export class MissiveApi extends Container<Env> {
       EDGE_URL: env.APP_URL,
       EDGE_SECRET: env.EDGE_SECRET,
       MISSIVE_ORGANIZER: env.MISSIVE_ORGANIZER ?? "",
+      // Connected Gmail/Outlook/IMAP accounts sync every minute (kept awake by the cron below).
+      AUTO_SYNC_INTERVAL_MS: "60000",
       GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "",
       GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET ?? "",
       OUTLOOK_CLIENT_ID: env.OUTLOOK_CLIENT_ID ?? "",
@@ -152,6 +154,15 @@ async function send(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
+  /**
+   * Every minute (wrangler.jsonc triggers): keeps the API container awake, so
+   * its scheduler keeps syncing connected accounts. Asleep, nothing syncs
+   * until someone opens the app, and new Gmail mail shows up late.
+   */
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await api(env).fetch(new Request(`${env.APP_URL}/api/v1/health`));
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/internal/send" && request.method === "POST") return send(request, env);

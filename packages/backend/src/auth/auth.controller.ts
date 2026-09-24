@@ -75,6 +75,9 @@ export class AuthController {
       response_type: "code",
       // "mailbox": Aegis adds mailbox_domain for a blank account that may claim a hosted mailbox.
       scope: "openid email profile mailbox",
+      // "Try again" after a refused sign-in asks Aegis for the login again,
+      // instead of reusing the Aegis session that was just refused.
+      ...(req.query.prompt === "login" ? { prompt: "login" } : {}),
       state: saved.state,
       nonce: saved.nonce,
       code_challenge: pkceChallenge(verifier),
@@ -105,12 +108,12 @@ export class AuthController {
       }),
     });
     if (!tokenResponse.ok) {
-      return res.status(502).type("html").send(`<p>Aegis didn't accept the sign-in. <a href="/auth/login">Try again</a>.</p>`);
+      return res.status(502).type("html").send(`<p>Aegis didn't accept the sign-in. <a href="/auth/login?prompt=login">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
     }
     const tokens = (await tokenResponse.json()) as { id_token?: string };
     const claims = tokens.id_token ? await verifyIdToken(tokens.id_token, saved.nonce, site.clientId) : null;
     if (!claims?.sub || !claims.email || claims.email_verified !== true) {
-      return res.status(403).type("html").send(`<p>Your Aegis account needs a verified email. <a href="/auth/login">Try again</a>.</p>`);
+      return res.status(403).type("html").send(`<p>Your Aegis account needs a verified email. Verify it in Aegis, or ask your admin to set it up. <a href="/auth/login?prompt=login">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
     }
     let user;
     try {
@@ -123,6 +126,8 @@ export class AuthController {
     // Came in through a mailbox invitation: that address is theirs now (once).
     const invite = unseal<{ token: string; exp: number }>(readCookie(req.headers.cookie, INVITE_COOKIE));
     if (invite) await this.users.claimInvite(invite.token, user.id);
+    // An admin-provisioned account for a hosted address gets that mailbox.
+    await this.users.provisionOwnAddress(user.id, claims.email, claims.name);
     const session: Session = { userId: user.id, exp: Date.now() + SESSION_HOURS * 3600_000 };
     res.setHeader("set-cookie", [
       cookie(SESSION_COOKIE, seal(session), SESSION_HOURS * 3600),
