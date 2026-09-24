@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut } from "lucide-react";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -220,6 +220,11 @@ function LayoutShell() {
               <p className="font-medium text-foreground truncate">{me?.name ?? me?.email ?? ""}</p>
               <p className="text-xs text-muted-foreground truncate">{me?.mailboxes[0]?.address ?? me?.email ?? ""}</p>
             </div>
+            {me?.accountUrl && (
+              <a href={me.accountUrl} target="_blank" rel="noopener noreferrer" title="Account & security: password, passkeys" aria-label="Account and security" className="text-muted-foreground hover:text-foreground">
+                <KeyRound className="w-4 h-4" />
+              </a>
+            )}
             <a href="/auth/logout" title="Sign out" aria-label="Sign out" className="text-muted-foreground hover:text-foreground">
               <LogOut className="w-4 h-4" />
             </a>

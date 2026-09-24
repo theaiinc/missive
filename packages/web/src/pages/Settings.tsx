@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useEffect, useState } from "react";
-import { RefreshCw, Trash2, Plus, Loader2 } from "lucide-react";
+import { RefreshCw, Trash2, Plus, Loader2, KeyRound } from "lucide-react";
+import { useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors, colorOptions } from "@/hooks/useAccountColors";
 import { useEntityConfig, ConfigItem } from "@/hooks/useEntityConfig";
@@ -841,6 +842,7 @@ function ConfigSection({
 }
 
 export function Settings() {
+  const { data: me } = useMe();
   const [searchParams] = useSearchParams();
 
   const { data: gmailStatus, refetch: refetchGmail } = useQuery({
@@ -951,6 +953,8 @@ export function Settings() {
       </div>
 
       <div className="flex-1 px-8 py-6 space-y-8 overflow-y-auto">
+        {me?.accountUrl && <SignInSecurity accountUrl={me.accountUrl} email={me.email} />}
+
         {/* Connected Accounts */}
         <section>
           <div className="flex items-center gap-2 mb-4">
@@ -1092,5 +1096,34 @@ export function Settings() {
         </section>
       </div>
     </div>
+  );
+}
+
+/**
+ * Password, passkeys and two-step sign-in are managed in Aegis: a passkey can
+ * only be registered on Aegis's own site, since that's where it's checked.
+ * These open the Aegis account page at the right spot, in a new tab.
+ */
+function SignInSecurity({ accountUrl, email }: { accountUrl: string; email: string }) {
+  const open = (anchor: string) => window.open(`${accountUrl}#${anchor}`, "_blank", "noopener,noreferrer");
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="text-sm font-medium text-foreground">Sign-in &amp; security</h3>
+      </div>
+      <p className="text-sm text-muted-foreground mb-3">
+        You sign in to Missive with your Aegis account ({email}). Add a passkey to sign in with your fingerprint, face or
+        device PIN instead of a password. These open your Aegis account page in a new tab.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => open("passkey-button")}>
+          <KeyRound className="w-4 h-4 mr-1.5" />
+          Add a passkey
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => open("password-form")}>
+          Change password
+        </Button>
+      </div>
+    </section>
   );
 }

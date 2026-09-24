@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 
 export type Mailbox = { address: string; domain: string; displayName?: string };
-/** mailboxOffer: this account may claim a hosted mailbox at `domain` (and has none yet). */
-export type Me = { id: string; email: string; name?: string; mailboxes: Mailbox[]; mailboxOffer?: { domain: string } | null };
+/** mailboxOffer: this account may claim a hosted mailbox at `domain` (and has none yet). accountUrl: their Aegis account page. */
+export type Me = { id: string; email: string; name?: string; mailboxes: Mailbox[]; mailboxOffer?: { domain: string } | null; accountUrl?: string };
 
 /** The signed-in Aegis user and the hosted mailboxes they can send from. */
 export function useMe() {
