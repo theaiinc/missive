@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, Post, Req, Res, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Post, Req, Res, UnauthorizedException } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { UsersService } from "./users.service";
@@ -6,7 +6,7 @@ import { localPartProblem } from "./mailbox-claim";
 import { extraSites, mainSite } from "./auth/sites";
 import { INVITE_COOKIE, cookie, seal } from "./auth/session";
 import { currentUser } from "./request-context";
-import { isAdmin } from "./admin.controller";
+import { AdminAccess } from "./admin.controller";
 
 const INVITE_MINUTES = 30;
 
@@ -34,16 +34,23 @@ const page = (res: Response, status: number, title: string, text: string) =>
  */
 @Controller()
 export class InviteController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly access: AdminAccess,
+  ) {}
 
   @Post("api/v1/admin/mailbox-invites")
   async create(@Req() req: Request, @Body() body: Record<string, unknown>) {
-    // The admin token (scripts), or a signed-in admin (the console).
-    if (!adminAllowed(req.headers.authorization) && !isAdmin(currentUser()?.email)) throw new UnauthorizedException();
+    // The admin token (scripts), or a signed-in admin of the address's organization (the console).
+    const byToken = adminAllowed(req.headers.authorization);
+    const user = currentUser();
+    const scope = !byToken && user ? await this.users.adminScope(user.id) : null;
+    if (!byToken && !scope) throw new UnauthorizedException();
     const address = typeof body.address === "string" ? body.address.trim().toLowerCase() : "";
     const [localPart, domain] = address.split("@");
     if (!localPart || !domain || address.split("@").length !== 2) throw new BadRequestException("Give the full address, like nhi.yen@bugmole.com");
     if (localPartProblem(localPart)) throw new BadRequestException("That address isn't allowed");
+    if (scope && !(await this.access.coversDomain(scope, domain))) throw new ForbiddenException("You don't administer that domain's organization");
     const days = Math.min(Math.max(Number(body.days) || 7, 1), 30);
     const displayName = typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : undefined;
     const invite = await this.users.createInvite(address, displayName, days);

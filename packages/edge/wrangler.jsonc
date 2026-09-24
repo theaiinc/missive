@@ -52,8 +52,8 @@
     "AEGIS_CLIENT_ID": "missive",
     // mail.bugmole.com signs in with the Bugmole tenant's own client.
     "MISSIVE_SITES": "mail.bugmole.com=bugmole-mail",
-    // Who sees the admin console (Aegis emails), and the organizations' names there.
-    "MISSIVE_ADMINS": "steve.tran@theaiinc.com",
+    // The organizations' names in the admin console. Who may use the console
+    // comes from Aegis roles (ADMIN, managed tenants, platform admin).
     "MISSIVE_ORG_NAMES": "missive=The AI Inc,bugmole-mail=Bugmole",
     // Email Routing sends bugmole.com's other addresses here too; the ones
     // that aren't Missive mailboxes still reach Steve.
