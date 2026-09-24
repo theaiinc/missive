@@ -4,6 +4,8 @@ import { ImapSyncService } from "./imap-sync.service";
 import { OrganizerService } from "./organizer.service";
 import { RuleService } from "./rule.service";
 import { SystemEventService } from "./system-event.service";
+import { UsersService } from "./users.service";
+import { runAsUser } from "./request-context";
 
 /**
  * Periodically syncs all connected accounts on a 5-minute interval,
@@ -22,22 +24,34 @@ export class SyncScheduler implements OnModuleInit {
     private readonly imapSync: ImapSyncService,
     private readonly organizer: OrganizerService,
     private readonly rules: RuleService,
-    private readonly events: SystemEventService
+    private readonly events: SystemEventService,
+    private readonly users: UsersService
   ) {
     this.intervalMs = parseInt(process.env.AUTO_SYNC_INTERVAL_MS ?? "300000", 10);
   }
 
   onModuleInit() {
     // Run initial organizer pass shortly after startup (5s)
-    setTimeout(() => this.runOrganizer(), 5_000);
+    setTimeout(() => this.forEachUser(() => this.runOrganizer()), 5_000);
 
     // First sync shortly after startup
-    setTimeout(() => this.tick(), 15_000);
+    setTimeout(() => this.forEachUser(() => this.tick()), 15_000);
 
     this.logger.log(
       `Auto-sync scheduled every ${this.intervalMs / 1000}s`
     );
-    this.intervalHandle = setInterval(() => this.tick(), this.intervalMs);
+    this.intervalHandle = setInterval(() => this.forEachUser(() => this.tick()), this.intervalMs);
+  }
+
+  /** Each user's accounts and mail are only visible as that user, so jobs run once per user. */
+  private async forEachUser(job: () => Promise<void>) {
+    try {
+      for (const user of await this.users.all()) {
+        await runAsUser(user, job);
+      }
+    } catch (err) {
+      this.logger.error("Scheduled job error:", err);
+    }
   }
 
   private async tick() {
@@ -98,6 +112,9 @@ export class SyncScheduler implements OnModuleInit {
   }
 
   private async runOrganizer() {
+    // Hosted without an AI model: its fallback files every message as "other"
+    // (Archived), so the organizer stays off until a model is configured.
+    if (process.env.MISSIVE_ORGANIZER === "off") return;
     try {
       const classified = await this.organizer.processNewMissives(50);
       if (classified > 0) {

@@ -1,0 +1,19 @@
+{
+  "name": "@theaiinc/missive-edge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "missive.theaiinc.com: serves the web app, runs the API in a Cloudflare Container, and moves hosted-mailbox mail in and out",
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "deploy": "pnpm --filter @theaiinc/missive-web exec vite build && wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "wrangler": "4.131.2"
+  }
+}

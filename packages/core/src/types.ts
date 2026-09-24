@@ -28,6 +28,7 @@ export const ConnectorProvider = z.enum([
   "crm",
   "helpdesk",
   "imap",
+  "missive", // a mailbox Missive hosts itself, on a custom domain
 ]);
 export type ConnectorProvider = z.infer<typeof ConnectorProvider>;
 

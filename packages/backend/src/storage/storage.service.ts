@@ -197,7 +197,7 @@ export class StorageService {
       `SELECT f.*, COUNT(m.id)::int AS missive_count
        FROM folders f
        LEFT JOIN missives m ON m.folder = f.slug
-       GROUP BY f.id, f.name, f.slug, f.icon, f.system, f.ord, f.created_at, f.updated_at
+       GROUP BY f.owner_id, f.id
        ORDER BY f.ord ASC`,
     );
     return rows.map(rowToFolder);

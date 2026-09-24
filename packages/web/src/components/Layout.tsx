@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText } from "lucide-react";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,8 @@ import { Toaster } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 import { useOrganizerStatus } from "@/hooks/useOrganizerStatus";
 import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
+import { useMe } from "@/hooks/useMe";
+import { ComposeProvider, useCompose } from "./Compose";
 
 const folderIcons: Record<string, React.ElementType> = {
   inbox: InboxIcon,
@@ -20,6 +22,7 @@ const folderIcons: Record<string, React.ElementType> = {
   "user-plus": UserPlus,
   "life-buoy": LifeBuoy,
   user: User,
+  send: Send,
 };
 
 const navItems = [
@@ -33,6 +36,20 @@ async function fetchFolders(): Promise<Folder[]> {
 }
 
 export function Layout() {
+  return (
+    <ComposeProvider>
+      <LayoutShell />
+    </ComposeProvider>
+  );
+}
+
+function initials(name: string) {
+  return name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+}
+
+function LayoutShell() {
+  const { data: me } = useMe();
+  const compose = useCompose();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const activeFolder = searchParams.get("folder") ?? "inbox";
@@ -87,6 +104,18 @@ export function Layout() {
         </div>
 
         <Separator />
+
+        {me && me.mailboxes.length > 0 && (
+          <div className="px-3 pt-3">
+            <button
+              onClick={() => compose()}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              <PenSquare className="w-4 h-4" />
+              Compose
+            </button>
+          </div>
+        )}
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {/* Folder list — first item is the inbox folder */}
@@ -183,13 +212,16 @@ export function Layout() {
           <div className="flex items-center gap-3 px-3 py-2">
             <Avatar className="h-8 w-8">
               <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                ST
+                {me ? initials(me.name ?? me.email) : ""}
               </AvatarFallback>
             </Avatar>
-            <div className="text-sm leading-tight">
-              <p className="font-medium text-foreground">Steve Tran</p>
-              <p className="text-xs text-muted-foreground">theaiinc</p>
+            <div className="text-sm leading-tight min-w-0 flex-1">
+              <p className="font-medium text-foreground truncate">{me?.name ?? me?.email ?? ""}</p>
+              <p className="text-xs text-muted-foreground truncate">{me?.mailboxes[0]?.address ?? me?.email ?? ""}</p>
             </div>
+            <a href="/auth/logout" title="Sign out" aria-label="Sign out" className="text-muted-foreground hover:text-foreground">
+              <LogOut className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </aside>

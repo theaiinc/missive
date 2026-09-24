@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+.env
+.env.*
+.neon
+.git
+.agents
+.cursor
+.docker
+**/.wrangler

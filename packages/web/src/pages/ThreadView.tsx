@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Reply } from "lucide-react";
+import { useCompose } from "@/components/Compose";
+import { useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
 
@@ -129,6 +131,24 @@ export function ThreadView() {
 function EmailCard({ missive }: { missive: Missive }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { getColor } = useAccountColors();
+  const compose = useCompose();
+  const { data: me } = useMe();
+  // Replies go out from the hosted mailbox the message belongs to.
+  const mailbox = me?.mailboxes.find((m) => m.address === missive.accountEmail);
+  const reply = () => {
+    const outbound = missive.direction === "outbound";
+    const subject = missive.subject ?? "";
+    compose({
+      from: mailbox!.address,
+      to: outbound ? missive.to.map((t) => t.address).join(", ") : missive.from.address,
+      subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+      text: `\n\nOn ${new Date(missive.receivedAt).toLocaleString()}, ${missive.from.name ?? missive.from.address} wrote:\n${missive.body
+        .split("\n")
+        .map((l) => `> ${l}`)
+        .join("\n")}`,
+      replyTo: missive.id,
+    });
+  };
 
   const resizeIframe = useCallback(() => {
     const iframe = iframeRef.current;
@@ -185,6 +205,12 @@ function EmailCard({ missive }: { missive: Missive }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {mailbox && (
+            <Button variant="outline" size="sm" onClick={reply}>
+              <Reply className="w-3.5 h-3.5 mr-1.5" />
+              Reply
+            </Button>
+          )}
           {missive.classification && (
             <Badge variant="secondary" className="text-[10px]">
               {missive.classification}
