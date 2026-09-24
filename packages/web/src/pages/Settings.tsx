@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -25,7 +26,8 @@ interface ProviderStatus {
 
 async function getAuthUrl(provider: string): Promise<string> {
   const res = await fetch(`/api/v1/connector/${provider}/auth`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.url) throw new Error(data.message ?? data.error ?? `Couldn't start connecting ${provider}.`);
   return data.url;
 }
 
@@ -935,8 +937,11 @@ export function Settings() {
   }, [searchParams, refetchGmail, refetchOutlook]);
 
   const handleConnect = async (provider: string) => {
-    const authUrl = await getAuthUrl(provider);
-    window.location.href = authUrl;
+    try {
+      window.location.href = await getAuthUrl(provider);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
   };
 
   return (

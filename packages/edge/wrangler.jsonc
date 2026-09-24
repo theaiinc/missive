@@ -7,7 +7,10 @@
   //  - sends it (Email Sending binding, called by the API at /internal/send)
   //
   // Secrets (wrangler secret put …): DATABASE_URL, SESSION_SECRET,
-  // AEGIS_CLIENT_SECRET, INBOUND_SECRET, EDGE_SECRET.
+  // AEGIS_CLIENT_SECRET, INBOUND_SECRET, EDGE_SECRET. Optional, for connecting
+  // Gmail / Outlook in Settings: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
+  // OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET, OUTLOOK_TENANT (their OAuth apps
+  // must allow the redirect https://missive.theaiinc.com/oauth).
   // Deploy: pnpm --filter @theaiinc/missive-edge run deploy (needs Docker).
   "name": "missive",
   "main": "src/index.ts",

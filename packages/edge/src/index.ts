@@ -21,6 +21,12 @@ export interface Env {
   INBOUND_SECRET: string;
   /** The API proves itself to the Worker with this when it sends mail. */
   EDGE_SECRET: string;
+  /** Optional: OAuth apps for connecting Gmail / Outlook accounts (Settings). Redirect: APP_URL/oauth. */
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
+  OUTLOOK_CLIENT_ID?: string;
+  OUTLOOK_CLIENT_SECRET?: string;
+  OUTLOOK_TENANT?: string;
 }
 
 /** The Missive API (Dockerfile.backend). Its settings come from this Worker's vars and secrets. */
@@ -46,6 +52,11 @@ export class MissiveApi extends Container<Env> {
       EDGE_URL: env.APP_URL,
       EDGE_SECRET: env.EDGE_SECRET,
       MISSIVE_ORGANIZER: env.MISSIVE_ORGANIZER ?? "",
+      GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "",
+      GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET ?? "",
+      OUTLOOK_CLIENT_ID: env.OUTLOOK_CLIENT_ID ?? "",
+      OUTLOOK_CLIENT_SECRET: env.OUTLOOK_CLIENT_SECRET ?? "",
+      OUTLOOK_TENANT: env.OUTLOOK_TENANT ?? "",
     };
   }
 }

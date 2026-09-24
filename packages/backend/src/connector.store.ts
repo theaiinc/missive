@@ -12,6 +12,9 @@ export interface StoredConnector {
   lastSyncAt?: string | null;
 }
 
+/** The web app's OAuth landing page (pages/OAuthCallback) on this deployment. */
+const defaultOAuthRedirect = () => `${process.env.APP_URL ?? "http://localhost:5173"}/oauth`;
+
 @Injectable()
 export class ConnectorStore {
   constructor(private readonly pg: PostgresService) {}
@@ -22,7 +25,7 @@ export class ConnectorStore {
     return new google.auth.OAuth2(
       process.env.GMAIL_CLIENT_ID,
       process.env.GMAIL_CLIENT_SECRET,
-      process.env.GMAIL_REDIRECT_URI ?? "http://localhost:5173/oauth"
+      process.env.GMAIL_REDIRECT_URI || defaultOAuthRedirect()
     );
   }
 
@@ -100,7 +103,7 @@ export class ConnectorStore {
   getOutlookAuthUrl(): string {
     const clientId = process.env.OUTLOOK_CLIENT_ID;
     const redirectUri =
-      process.env.OUTLOOK_REDIRECT_URI ?? "http://localhost:5173/oauth";
+      process.env.OUTLOOK_REDIRECT_URI || defaultOAuthRedirect();
     const scope =
       "openid profile email User.Read Mail.Read Mail.ReadBasic Mail.Send offline_access IMAP.AccessAsUser.All";
     return (
@@ -122,7 +125,7 @@ export class ConnectorStore {
     email: string;
   }> {
     const redirectUri =
-      process.env.OUTLOOK_REDIRECT_URI ?? "http://localhost:5173/oauth";
+      process.env.OUTLOOK_REDIRECT_URI || defaultOAuthRedirect();
     const res = await fetch(
       `https://login.microsoftonline.com/${this.outlookTenant}/oauth2/v2.0/token`,
       {

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Query } from "@nestjs/common";
+import { Controller, Get, Post, Delete, Body, Query, ServiceUnavailableException } from "@nestjs/common";
 import { google } from "googleapis";
 import { ConnectorStore } from "./connector.store";
 import { SyncService } from "./sync.service";
@@ -16,6 +16,9 @@ export class ConnectorController {
 
   @Get("gmail/auth")
   getGmailAuthUrl(): { url: string } {
+    if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
+      throw new ServiceUnavailableException("Connecting Gmail isn't set up on this server yet.");
+    }
     return { url: this.store.getGmailAuthUrl() };
   }
 
@@ -96,6 +99,9 @@ export class ConnectorController {
 
   @Get("outlook/auth")
   getOutlookAuthUrl(): { url: string } {
+    if (!process.env.OUTLOOK_CLIENT_ID || !process.env.OUTLOOK_CLIENT_SECRET) {
+      throw new ServiceUnavailableException("Connecting Outlook isn't set up on this server yet.");
+    }
     return { url: this.store.getOutlookAuthUrl() };
   }
 
