@@ -59,8 +59,14 @@ export class SyncService {
 
         for (const msg of messages) {
           const existing = await this.storage.getMissive(msg.id!);
-          // Re-sync if body was "(no content)" or bodyHtml is missing
-          if (existing && existing.bodyHtml && existing.body !== "(no content)") continue;
+          // New means never stored. A stored message is fetched again only to
+          // repair a body that came in empty; that repair keeps its read state
+          // and isn't counted, announced, re-run through rules or re-added to
+          // its thread. (Skipping only when bodyHtml was present re-fetched every
+          // plain-text email on each sync, reported it as new and reset it to
+          // unread.)
+          if (existing && existing.body !== "(no content)") continue;
+          const isNew = !existing;
 
           const detail = await gmail.users.messages.get({
             userId: "me",
@@ -132,7 +138,7 @@ export class SyncService {
             to: toRaw.split(",").map((addr: string) => ({
               address: addr.trim(),
             })),
-            status: "unread",
+            status: existing?.status ?? "unread",
             accountEmail: connector.email,
             receivedAt: dateRaw
               ? new Date(dateRaw).toISOString()
@@ -142,6 +148,7 @@ export class SyncService {
           };
 
           await this.storage.saveMissive(missive);
+          if (!isNew) continue;
 
           // Apply rules to the newly synced missive
           const ruleActions = await this.rules.evaluate(missive);
@@ -149,7 +156,7 @@ export class SyncService {
             await this.rules.applyActions(missive.id, ruleActions);
           }
 
-          thread.missiveIds.push(missive.id);
+          if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
           thread.messageCount = thread.missiveIds.length;
           thread.lastActivityAt = new Date().toISOString();
           await this.storage.saveThread(thread);
@@ -306,7 +313,7 @@ export class SyncService {
             await this.rules.applyActions(missive.id, ruleActions);
           }
 
-          thread.missiveIds.push(missive.id);
+          if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
           thread.messageCount = thread.missiveIds.length;
           thread.lastActivityAt = new Date().toISOString();
           await this.storage.saveThread(thread);

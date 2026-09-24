@@ -153,7 +153,14 @@ export class ImapSyncService {
 
           // Skip if already synced with full bodyHtml
           const existing = await this.storage.getMissive(providerMessageId);
-          if (existing && existing.bodyHtml) continue;
+          // New means never stored. A stored message is fetched again only to
+          // repair a body that came in empty; that repair keeps its read state
+          // and isn't counted, announced, re-run through rules or re-added to
+          // its thread. (Skipping only when bodyHtml was present re-fetched every
+          // plain-text email on each sync, reported it as new and reset it to
+          // unread.)
+          if (existing && existing.body !== "(no content)") continue;
+          const isNew = !existing;
 
           // Parse the raw email
           const parsed = await simpleParser(msg.source);
@@ -227,7 +234,7 @@ export class ImapSyncService {
               address: fromAddress,
             },
             to: toList,
-            status: "unread",
+            status: existing?.status ?? "unread",
             accountEmail: connector.email,
             receivedAt: dateRaw.toISOString(),
             createdAt: new Date().toISOString(),
@@ -235,6 +242,7 @@ export class ImapSyncService {
           };
 
           await this.storage.saveMissive(missive);
+          if (!isNew) continue;
 
           // Apply rules
           const ruleActions = await this.rules.evaluate(missive);
@@ -242,7 +250,7 @@ export class ImapSyncService {
             await this.rules.applyActions(missive.id, ruleActions);
           }
 
-          thread.missiveIds.push(missive.id);
+          if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
           thread.messageCount = thread.missiveIds.length;
           thread.lastActivityAt = new Date().toISOString();
           await this.storage.saveThread(thread);
