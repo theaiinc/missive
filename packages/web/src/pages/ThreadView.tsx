@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Reply } from "lucide-react";
 import { useCompose } from "@/components/Compose";
-import { useMe } from "@/hooks/useMe";
+import { canSendAs, useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
 
@@ -134,7 +134,10 @@ function EmailCard({ missive }: { missive: Missive }) {
   const compose = useCompose();
   const { data: me } = useMe();
   // Replies go out from the hosted mailbox the message belongs to.
-  const mailbox = me?.mailboxes.find((m) => m.address === missive.accountEmail);
+  // Reply from the address it came to when you may send as it; a group you're
+  // only a member of gets the reply from your own mailbox.
+  const to = me?.mailboxes.find((m) => m.address === missive.accountEmail);
+  const mailbox = to && canSendAs(to) ? to : to ? me?.mailboxes.find((m) => m.kind !== "group") : undefined;
   const reply = () => {
     const outbound = missive.direction === "outbound";
     const subject = missive.subject ?? "";

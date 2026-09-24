@@ -5,6 +5,8 @@ import { UsersService } from "./users.service";
 import { localPartProblem } from "./mailbox-claim";
 import { extraSites, mainSite } from "./auth/sites";
 import { INVITE_COOKIE, cookie, seal } from "./auth/session";
+import { currentUser } from "./request-context";
+import { isAdmin } from "./admin.controller";
 
 const INVITE_MINUTES = 30;
 
@@ -36,7 +38,8 @@ export class InviteController {
 
   @Post("api/v1/admin/mailbox-invites")
   async create(@Req() req: Request, @Body() body: Record<string, unknown>) {
-    if (!adminAllowed(req.headers.authorization)) throw new UnauthorizedException();
+    // The admin token (scripts), or a signed-in admin (the console).
+    if (!adminAllowed(req.headers.authorization) && !isAdmin(currentUser()?.email)) throw new UnauthorizedException();
     const address = typeof body.address === "string" ? body.address.trim().toLowerCase() : "";
     const [localPart, domain] = address.split("@");
     if (!localPart || !domain || address.split("@").length !== 2) throw new BadRequestException("Give the full address, like nhi.yen@bugmole.com");

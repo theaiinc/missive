@@ -31,7 +31,7 @@ export class StorageService {
         subject, body, body_html, sender_name, sender_address, recipients, status,
         classification, account_email, folder, received_at, created_at, updated_at
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())
-      ON CONFLICT (provider, provider_message_id) DO UPDATE SET
+      ON CONFLICT (owner_id, provider, provider_message_id) DO UPDATE SET
         body = EXCLUDED.body,
         body_html = EXCLUDED.body_html,
         status = EXCLUDED.status,
