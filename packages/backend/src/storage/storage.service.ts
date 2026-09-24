@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PostgresService } from './postgres.service';
+import { openRow, openRows, seal, sealJson } from './content-crypto';
 import type {
   Missive,
   Thread,
@@ -20,7 +21,7 @@ export class StorageService {
       [id],
     );
     if (rows.length === 0) return null;
-    return rowToMissive(rows[0]);
+    return rowToMissive(await openRow('missives', rows[0]));
   }
 
   async saveMissive(missive: Missive): Promise<void> {
@@ -42,15 +43,15 @@ export class StorageService {
         missive.direction,
         missive.provider,
         missive.providerMessageId,
-        missive.subject ?? null,
-        missive.body,
-        missive.bodyHtml ?? null,
-        missive.from.name ?? null,
-        missive.from.address,
-        JSON.stringify(missive.to),
+        await seal('missives', 'subject', missive.subject),
+        await seal('missives', 'body', missive.body),
+        await seal('missives', 'body_html', missive.bodyHtml),
+        await seal('missives', 'sender_name', missive.from.name),
+        await seal('missives', 'sender_address', missive.from.address),
+        await sealJson('missives', 'recipients', missive.to),
         missive.status,
         missive.classification ?? null,
-        missive.accountEmail ?? null,
+        await seal('missives', 'account_email', missive.accountEmail),
         missive.folder ?? 'inbox',
         missive.receivedAt,
       ],
@@ -62,7 +63,7 @@ export class StorageService {
       `SELECT * FROM missives WHERE thread_id = $1 ORDER BY received_at DESC`,
       [threadId],
     );
-    return rows.map(rowToMissive);
+    return (await openRows('missives', rows)).map(rowToMissive);
   }
 
   async getRecentMissives(since: string, limit = 10): Promise<Missive[]> {
@@ -70,7 +71,7 @@ export class StorageService {
       `SELECT * FROM missives WHERE created_at > $1 ORDER BY created_at DESC LIMIT $2`,
       [since, limit],
     );
-    return rows.map(rowToMissive);
+    return (await openRows('missives', rows)).map(rowToMissive);
   }
 
   // ── Threads ──
@@ -81,7 +82,7 @@ export class StorageService {
       [id],
     );
     if (rows.length === 0) return null;
-    return rowToThread(rows[0]);
+    return rowToThread(await openRow('threads', rows[0]));
   }
 
   async saveThread(thread: Thread): Promise<void> {
@@ -99,7 +100,7 @@ export class StorageService {
         thread.id,
         thread.provider,
         thread.providerThreadId,
-        thread.subject ?? null,
+        await seal('threads', 'subject', thread.subject),
         JSON.stringify(thread.participants),
         thread.messageCount,
         `{${thread.missiveIds.join(',')}}`,
@@ -121,11 +122,8 @@ export class StorageService {
       idx++;
     }
 
-    if (query.query) {
-      conditions.push(`(body ILIKE $${idx} OR subject ILIKE $${idx})`);
-      params.push(`%${query.query}%`);
-      idx++;
-    }
+    // Body, subject and sender are encrypted, so the database can't match
+    // them: those filters run below, on the decrypted rows.
     if (query.channel) {
       conditions.push(`channel = $${idx}`);
       params.push(query.channel);
@@ -136,11 +134,7 @@ export class StorageService {
       params.push(query.provider);
       idx++;
     }
-    if (query.from) {
-      conditions.push(`sender_address ILIKE $${idx}`);
-      params.push(`%${query.from}%`);
-      idx++;
-    }
+
     if (query.after) {
       conditions.push(`received_at >= $${idx}`);
       params.push(query.after);
@@ -167,17 +161,35 @@ export class StorageService {
     const limit = query.limit ?? 50;
     const offset = query.offset ?? 0;
 
-    const countRes = await this.pg.query(
-      `SELECT COUNT(*) FROM missives ${where}`,
-      params,
-    );
-    const total = parseInt(countRes.rows[0].count, 10);
-
-    const dataRes = await this.pg.query(
-      `SELECT * FROM missives ${where} ORDER BY received_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
-      [...params, limit, offset],
-    );
-    const missives = dataRes.rows.map(rowToMissive);
+    let missives: Missive[];
+    let total: number;
+    const text = query.query?.trim().toLowerCase();
+    const from = query.from?.trim().toLowerCase();
+    if (text || from) {
+      // Decrypt this user's candidate rows (already narrowed by folder,
+      // channel, dates, ...) and match in memory, as ILIKE '%…%' did.
+      const dataRes = await this.pg.query(
+        `SELECT * FROM missives ${where} ORDER BY received_at DESC`,
+        params,
+      );
+      const matches = (await openRows('missives', dataRes.rows)).filter((r) =>
+        (!text || `${r.subject ?? ''}\n${r.body ?? ''}`.toLowerCase().includes(text)) &&
+        (!from || String(r.sender_address ?? '').toLowerCase().includes(from)),
+      );
+      total = matches.length;
+      missives = matches.slice(offset, offset + limit).map(rowToMissive);
+    } else {
+      const countRes = await this.pg.query(
+        `SELECT COUNT(*) FROM missives ${where}`,
+        params,
+      );
+      total = parseInt(countRes.rows[0].count, 10);
+      const dataRes = await this.pg.query(
+        `SELECT * FROM missives ${where} ORDER BY received_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, limit, offset],
+      );
+      missives = (await openRows('missives', dataRes.rows)).map(rowToMissive);
+    }
 
     // Resolve threads
     const threadIds = [...new Set(missives.map(m => m.threadId))] as string[];
@@ -269,11 +281,16 @@ export class StorageService {
     excludeId: string,
     limit = 20,
   ): Promise<{ id: string }[]> {
+    // sender_address is encrypted: narrow by folder in SQL, match the domain here.
     const { rows } = await this.pg.query(
-      `SELECT id FROM missives WHERE folder = $1 AND sender_address ILIKE $2 AND id <> $3 LIMIT $4`,
-      [folder, `%@${domain}`, excludeId, limit],
+      `SELECT id, owner_id, sender_address FROM missives WHERE folder = $1 AND id <> $2 ORDER BY received_at DESC`,
+      [folder, excludeId],
     );
-    return rows;
+    const suffix = `@${domain.toLowerCase()}`;
+    return (await openRows('missives', rows))
+      .filter((r) => String(r.sender_address ?? '').toLowerCase().endsWith(suffix))
+      .slice(0, limit)
+      .map((r) => ({ id: r.id }));
   }
 
   /** Move multiple missives to a folder in one query. */

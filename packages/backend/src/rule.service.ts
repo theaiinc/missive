@@ -1,3 +1,4 @@
+import { openRows } from "./storage/content-crypto";
 import { Injectable } from "@nestjs/common";
 import { PostgresService } from "./storage/postgres.service";
 import type {
@@ -155,7 +156,7 @@ export class RuleService {
     const { rows } = await this.pg.query(
       "SELECT * FROM missives ORDER BY received_at DESC"
     );
-    const missives = rows.map(rowToSimpleMissive);
+    const missives = (await openRows("missives", rows)).map(rowToSimpleMissive);
     let applied = 0;
 
     for (const missive of missives) {
@@ -187,7 +188,7 @@ export class RuleService {
     );
     if (rows.length === 0) return { applied: 0, evaluated: 0 };
 
-    const missives = rows.map(rowToSimpleMissive);
+    const missives = (await openRows("missives", rows)).map(rowToSimpleMissive);
     let applied = 0;
 
     for (const missive of missives) {
