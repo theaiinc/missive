@@ -56,8 +56,8 @@
     // No AI model is hosted yet; see SyncScheduler.runOrganizer.
     "MISSIVE_ORGANIZER": "off"
   },
-  "routes": [
-    { "pattern": "missive.theaiinc.com", "custom_domain": true },
-    { "pattern": "mail.bugmole.com", "custom_domain": true }
-  ]
+  // mail.bugmole.com is also a custom domain of this Worker, attached in the
+  // dashboard: the deploy token has no access to the bugmole.com zone, and
+  // wrangler leaves custom domains it isn't told about alone.
+  "routes": [{ "pattern": "missive.theaiinc.com", "custom_domain": true }]
 }
