@@ -1,3 +1,4 @@
+import { safeError } from "./log-safe";
 import { Injectable } from "@nestjs/common";
 import { google } from "googleapis";
 import { ConnectorStore, type StoredConnector } from "./connector.store";
@@ -167,7 +168,7 @@ export class SyncService {
         // Track last sync time
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
       } catch (err) {
-        console.error(`Gmail sync error for ${connector.email}:`, err);
+        console.error("Gmail sync error:", safeError(err));
         results[connector.email] = { error: "Sync failed" };
       }
     }
@@ -324,7 +325,7 @@ export class SyncService {
         // Track last sync time
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
       } catch (err) {
-        console.error(`Outlook sync error for ${connector.email}:`, err);
+        console.error("Outlook sync error:", safeError(err));
         results[connector.email] = { error: "Sync failed" };
       }
     }

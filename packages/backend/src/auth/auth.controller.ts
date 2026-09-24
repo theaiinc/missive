@@ -115,7 +115,7 @@ export class AuthController {
     } catch {
       return res.status(403).type("html").send(`<p>${claims.email.replace(/[<>&"]/g, "")} is already linked to another Aegis account.</p>`);
     }
-    const session: Session = { userId: user.id, email: user.email, name: user.name, exp: Date.now() + SESSION_HOURS * 3600_000 };
+    const session: Session = { userId: user.id, exp: Date.now() + SESSION_HOURS * 3600_000 };
     res.setHeader("set-cookie", [
       cookie(SESSION_COOKIE, seal(session), SESSION_HOURS * 3600),
       cookie(STATE_COOKIE, "", 0),

@@ -17,15 +17,26 @@ const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/];
 @Injectable()
 export class AuthMiddleware implements NestMiddleware {
   private devUser?: Promise<RequestUser>;
+  /** The cookie holds only the user id; email and name come from the database, briefly cached. */
+  private readonly cache = new Map<string, { user: RequestUser | null; at: number }>();
 
   constructor(private readonly users: UsersService) {}
+
+  private async userFor(id: string): Promise<RequestUser | null> {
+    const hit = this.cache.get(id);
+    if (hit && Date.now() - hit.at < 60_000) return hit.user;
+    const user = await this.users.byId(id);
+    if (this.cache.size > 1000) this.cache.clear();
+    this.cache.set(id, { user, at: Date.now() });
+    return user;
+  }
 
   async use(req: Request, res: Response, next: NextFunction) {
     const path = req.originalUrl.split("?")[0] ?? "";
     if (PUBLIC.some((p) => p.test(path))) return next();
 
     const session = unseal<Session>(readCookie(req.headers.cookie, SESSION_COOKIE));
-    let user: RequestUser | null = session ? { id: session.userId, email: session.email, name: session.name } : null;
+    let user: RequestUser | null = session ? await this.userFor(session.userId) : null;
 
     const devEmail = process.env.MISSIVE_DEV_USER_EMAIL;
     if (!user && devEmail && process.env.NODE_ENV !== "production") {

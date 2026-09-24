@@ -1,3 +1,4 @@
+import { safeError } from "./log-safe";
 import { Injectable } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
@@ -69,7 +70,7 @@ export class ImapSyncService {
         // Track last sync time
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
       } catch (err) {
-        console.error(`IMAP sync error for ${connector.email}:`, err);
+        console.error("IMAP sync error:", safeError(err));
         results[connector.email] = { error: "Sync failed" };
       }
     }
@@ -90,28 +91,20 @@ export class ImapSyncService {
       auth: config.accessToken
         ? { user: config.user, accessToken: config.accessToken }
         : { user: config.user, pass: config.password! },
-      logger: {
-        debug: (msg: any) => console.debug("[IMAP DEBUG]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-        info: (msg: any) => console.info("[IMAP]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-        warn: (msg: any) => console.warn("[IMAP WARN]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-        error: (msg: any) => console.error("[IMAP ERROR]", typeof msg === "string" ? msg : JSON.stringify(msg)),
-      },
+      // The protocol log carries the username and server responses (which can
+      // quote mailbox contents), so it stays off, as in syncAccount.
+      logger: false,
     });
 
     try {
       await client.connect();
-      console.log(`[IMAP] Connected OK to ${config.host}:${config.port} as ${config.user}`);
+      console.log(`[IMAP] Connected OK to ${config.host}:${config.port}`);
       await client.logout();
       return config.user;
     } catch (err: any) {
       // Extract actual IMAP server response text for meaningful error messages
       const imapResponse = err.response?.text || err.responseText || err.message || String(err);
-      console.error(`[IMAP] FAILED for ${config.host}:${config.port} as ${config.user}:`, {
-        message: err.message,
-        code: err.code,
-        responseStatus: err.responseStatus,
-        responseText: imapResponse,
-      });
+      console.error(`[IMAP] FAILED for ${config.host}:${config.port}:`, safeError(err));
       throw new Error(`IMAP connection failed: ${imapResponse}`);
     }
   }

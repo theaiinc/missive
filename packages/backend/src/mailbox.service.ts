@@ -118,7 +118,7 @@ export class MailboxService {
     const actions = await this.rules.evaluate(missive);
     if (actions.length) await this.rules.applyActions(missive.id, actions);
     this.events.emit("missive.received", { type: "missive.received", timestamp: now, payload: missive });
-    this.logger.log(`Received mail for ${mailbox.address}`);
+    this.logger.log("Received mail for a hosted mailbox");
     return true;
   }
 

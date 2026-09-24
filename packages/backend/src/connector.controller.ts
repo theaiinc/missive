@@ -1,3 +1,4 @@
+import { safeError } from "./log-safe";
 import { Controller, Get, Post, Delete, Body, Query, ServiceUnavailableException } from "@nestjs/common";
 import { google } from "googleapis";
 import { ConnectorStore } from "./connector.store";
@@ -52,7 +53,7 @@ export class ConnectorController {
 
       return { connected: true, id: connector.id, email: profile.email };
     } catch (err) {
-      console.error("Gmail token exchange error:", err);
+      console.error("Gmail token exchange error:", safeError(err));
       return { error: "token_exchange_failed" };
     }
   }
@@ -123,7 +124,7 @@ export class ConnectorController {
 
       return { connected: true, id: connector.id, email };
     } catch (err) {
-      console.error("Outlook token exchange error:", err);
+      console.error("Outlook token exchange error:", safeError(err));
       return { error: "token_exchange_failed" };
     }
   }
