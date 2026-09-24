@@ -4,6 +4,8 @@ import { createHmac, timingSafeEqual, randomBytes, createHash } from "node:crypt
 
 export const SESSION_COOKIE = "missive_session";
 export const STATE_COOKIE = "missive_oidc";
+/** A mailbox invitation being used by the sign-in in progress (see InviteController). */
+export const INVITE_COOKIE = "missive_invite";
 export const SESSION_HOURS = 12;
 
 /**

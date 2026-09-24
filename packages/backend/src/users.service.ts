@@ -1,8 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { PostgresService } from "./storage/postgres.service";
 import type { RequestUser } from "./request-context";
+import { createHash, randomBytes } from "node:crypto";
 import { addressIndex, normalizeAddress, openIdentity, sealIdentity } from "./identity-crypto";
 import { runAsUser } from "./request-context";
+
+/** Only a hash of an invitation link's token is stored. */
+const inviteHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
 export type Mailbox = { address: string; domain: string; userId: string; displayName?: string };
 
@@ -105,9 +109,12 @@ export class UsersService {
     return connected.rows.length ? null : domain;
   }
 
+  /** Taken by a mailbox, or reserved by an open invitation. */
   async addressTaken(address: string): Promise<boolean> {
     const { rows } = await this.pg.systemQuery(
-      `SELECT 1 FROM mailboxes WHERE address_bidx = $1`,
+      `SELECT 1 FROM mailboxes WHERE address_bidx = $1
+       UNION ALL
+       SELECT 1 FROM mailbox_invites WHERE address_bidx = $1 AND claimed_at IS NULL AND expires_at > NOW()`,
       [await addressIndex("mailboxes.address", address)],
     );
     return rows.length > 0;
@@ -127,5 +134,96 @@ export class UsersService {
     if (!rows[0]) return null;
     await this.setMailboxOffer(userId, null);
     return rowToMailbox(rows[0]);
+  }
+
+  // ── Mailbox invitations (a link for one specific address) ──
+
+  /**
+   * Reserves `address` and returns the one-time token for its link. An open
+   * invitation for the same address is replaced, so a lost link can be
+   * reissued. Null when the address already has a mailbox or its domain
+   * isn't hosted.
+   */
+  async createInvite(address: string, displayName: string | undefined, days: number): Promise<{ token: string; expiresAt: Date } | null> {
+    const lower = normalizeAddress(address);
+    const domain = lower.split("@")[1] ?? "";
+    const bidx = await addressIndex("mailboxes.address", lower);
+    const hosted = await this.pg.systemQuery(`SELECT 1 FROM domains WHERE name = $1`, [domain]);
+    const owned = await this.pg.systemQuery(`SELECT 1 FROM mailboxes WHERE address_bidx = $1`, [bidx]);
+    if (!hosted.rows.length || owned.rows.length) return null;
+    const token = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + days * 86_400_000);
+    const client = await this.pg.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM mailbox_invites WHERE address_bidx = $1 AND claimed_at IS NULL`, [bidx]);
+      await client.query(
+        `INSERT INTO mailbox_invites (token_hash, address, address_bidx, domain, display_name, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [inviteHash(token), await sealIdentity("mailbox_invites.address", lower), bidx, domain,
+         await sealIdentity("mailbox_invites.display_name", displayName), expiresAt],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { token, expiresAt };
+  }
+
+  /** The address an open, unexpired invitation is for, or null. */
+  async openInvite(token: string): Promise<string | null> {
+    const { rows } = await this.pg.systemQuery(
+      `SELECT address FROM mailbox_invites WHERE token_hash = $1 AND claimed_at IS NULL AND expires_at > NOW()`,
+      [inviteHash(token)],
+    );
+    return rows[0] ? openIdentity("mailbox_invites.address", rows[0].address) : null;
+  }
+
+  /**
+   * Gives the invitation's mailbox to `userId` and closes the invitation, in
+   * one transaction so a link works once. Null if the link is no longer open
+   * or this person already has a hosted mailbox.
+   */
+  async claimInvite(token: string, userId: string): Promise<Mailbox | null> {
+    const client = await this.pg.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `SELECT * FROM mailbox_invites WHERE token_hash = $1 AND claimed_at IS NULL AND expires_at > NOW() FOR UPDATE`,
+        [inviteHash(token)],
+      );
+      const invite = rows[0];
+      const has = await client.query(`SELECT 1 FROM mailboxes WHERE user_id = $1`, [userId]);
+      if (!invite || has.rows.length) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const address = (await openIdentity("mailbox_invites.address", invite.address))!;
+      const displayName = (await openIdentity("mailbox_invites.display_name", invite.display_name)) ?? undefined;
+      const created = await client.query(
+        `INSERT INTO mailboxes (address, address_bidx, domain, user_id, display_name)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (address_bidx) DO NOTHING
+         RETURNING *`,
+        [await sealIdentity("mailboxes.address", address), invite.address_bidx, invite.domain, userId,
+         await sealIdentity("mailboxes.display_name", displayName)],
+      );
+      if (!created.rows[0]) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query(`UPDATE mailbox_invites SET claimed_at = NOW(), claimed_by = $2 WHERE id = $1`, [invite.id, userId]);
+      await client.query(`UPDATE users SET mailbox_offer_domain = NULL WHERE id = $1`, [userId]);
+      await client.query("COMMIT");
+      return rowToMailbox(created.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
