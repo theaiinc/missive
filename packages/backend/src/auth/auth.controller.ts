@@ -39,6 +39,16 @@ async function verifyIdToken(token: string, nonce: string): Promise<IdClaims | n
   return claims;
 }
 
+/** Aegis's end_session URL; client_id identifies the app, so no id_token has to be kept. */
+export function aegisLogoutUrl(): string {
+  const url = new URL(`${issuer()}/session/end`);
+  url.search = new URLSearchParams({
+    client_id: clientId(),
+    post_logout_redirect_uri: `${appUrl()}/`,
+  }).toString();
+  return url.toString();
+}
+
 /** Only same-app paths, so the sign-in can't be used as an open redirect. */
 const safeReturn = (value: unknown) =>
   typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/";
@@ -113,10 +123,16 @@ export class AuthController {
     res.redirect(302, saved.returnTo);
   }
 
+  /**
+   * Ends the Missive session *and* the Aegis one (OIDC RP-initiated logout).
+   * Clearing only our cookie left the person signed in at Aegis, so the next
+   * "Sign in" went straight back in without asking. Aegis confirms, then
+   * returns to APP_URL/, which must be a registered post-logout URI.
+   */
   @Get("auth/logout")
   logout(@Res() res: Response) {
     res.setHeader("set-cookie", cookie(SESSION_COOKIE, "", 0));
-    res.redirect(302, "/");
+    res.redirect(302, aegisLogoutUrl());
   }
 
   /** Who is signed in, and the hosted mailboxes they can read and send from. */
