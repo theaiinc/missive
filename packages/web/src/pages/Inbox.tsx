@@ -125,7 +125,7 @@ export function Inbox() {
         }),
       });
       if (!res.ok) {
-        setSemanticResult("AI search unavailable. Is LM Studio running?");
+        setSemanticResult("AI search is unavailable right now.");
         setSemanticLoading(false);
         return;
       }

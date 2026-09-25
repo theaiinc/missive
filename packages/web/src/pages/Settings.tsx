@@ -841,6 +841,62 @@ function ConfigSection({
   );
 }
 
+type AiModel = {
+  model: string; provider: string; where: string; organizer: boolean;
+  usage: { spent: number; limit: number; left: number } | null;
+};
+
+function AiModelCard() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["ai-model"],
+    queryFn: async (): Promise<AiModel> => {
+      const res = await fetch("/api/v1/chat/model");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
+  const spentOut = !!data?.usage && data.usage.left <= 0;
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground break-all">
+            {isLoading ? "Loading…" : isError || !data ? "Unavailable" : data.model}
+          </p>
+          {data && (
+            <p className="text-xs text-muted-foreground mt-1">
+              {data.provider}. {data.where}.
+            </p>
+          )}
+          {data?.usage && (
+            <p className={cn("text-xs mt-1", spentOut ? "text-amber-600" : "text-muted-foreground")}>
+              {spentOut
+                ? "Today's free AI allowance is used up. Sorting and the assistant resume at 00:00 UTC."
+                : `Today: ${data.usage.spent.toLocaleString()} of ${data.usage.limit.toLocaleString()} free neurons used.`}
+            </p>
+          )}
+          {data && !data.organizer && (
+            <p className="text-xs text-muted-foreground mt-1">Automatic sorting is switched off.</p>
+          )}
+        </div>
+        {data && (
+          <Badge
+            className={cn(
+              "border-0 shrink-0",
+              spentOut || !data.organizer
+                ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                : "bg-green-100 text-green-700 hover:bg-green-200"
+            )}
+          >
+            {spentOut ? "Paused" : data.organizer ? "Active" : "Off"}
+          </Badge>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export function Settings() {
   const { data: me } = useMe();
   const [searchParams] = useSearchParams();
@@ -1078,21 +1134,7 @@ export function Settings() {
           <h3 className="text-sm font-medium text-foreground mb-4">
             AI Model
           </h3>
-          <Card className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  google/gemma-4-26b-a4b-qat
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Running on LM Studio at 127.0.0.1:1234
-                </p>
-              </div>
-              <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border-0">
-                Active
-              </Badge>
-            </div>
-          </Card>
+          <AiModelCard />
         </section>
       </div>
     </div>

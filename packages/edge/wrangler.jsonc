@@ -12,6 +12,7 @@
   // Gmail / Outlook in Settings: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
   // OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET, OUTLOOK_TENANT (their OAuth apps
   // must allow the redirect https://missive.theaiinc.com/oauth).
+  // The organizer and chat assistant run on Workers AI through /internal/ai (src/ai.ts).
   // Deploy: pnpm --filter @theaiinc/missive-edge run deploy (needs Docker).
   "name": "missive",
   "main": "src/index.ts",
@@ -37,9 +38,18 @@
     }
   ],
   "durable_objects": {
-    "bindings": [{ "name": "API", "class_name": "MissiveApi" }]
+    "bindings": [
+      { "name": "API", "class_name": "MissiveApi" },
+      // Counts today's Workers AI use against AI_DAILY_NEURONS (src/ai.ts).
+      { "name": "AI_BUDGET", "class_name": "AiBudget" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MissiveApi"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MissiveApi"] },
+    { "tag": "v2", "new_sqlite_classes": ["AiBudget"] }
+  ],
+  // The organizer's and chat assistant's model (src/ai.ts).
+  "ai": { "binding": "AI" },
   // Keeps the API awake so connected accounts sync every minute (see scheduled()).
   "triggers": { "crons": ["* * * * *"] },
   "send_email": [{ "name": "EMAIL" }],
@@ -60,8 +70,11 @@
     // Email Routing sends bugmole.com's other addresses here too; the ones
     // that aren't Missive mailboxes still reach Steve.
     "FORWARD_UNKNOWN": "bugmole.com=stevetran.dev@gmail.com",
-    // No AI model is hosted yet; see SyncScheduler.runOrganizer.
-    "MISSIVE_ORGANIZER": "off"
+    // Missive's share of the Cloudflare account's free 10,000 Workers AI
+    // neurons a day; Bugmole's Scents keeps to 5,000.
+    "AI_DAILY_NEURONS": "4500",
+    // When the organizer was switched on: older mail stays where it is.
+    "ORGANIZER_SINCE": "2026-09-25T00:00:00Z"
   },
   // Custom domains missive.theaiinc.com and mail.bugmole.com are attached to
   // this Worker in Cloudflare (Workers → missive → Domains), not listed here.

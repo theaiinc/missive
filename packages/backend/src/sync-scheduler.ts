@@ -122,8 +122,7 @@ export class SyncScheduler implements OnModuleInit {
   }
 
   private async runOrganizer() {
-    // Hosted without an AI model: its fallback files every message as "other"
-    // (Archived), so the organizer stays off until a model is configured.
+    // MISSIVE_ORGANIZER=off switches it off (e.g. with no model to reach).
     if (process.env.MISSIVE_ORGANIZER === "off") return;
     try {
       const classified = await this.organizer.processNewMissives(50);
