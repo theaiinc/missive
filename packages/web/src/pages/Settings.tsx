@@ -1004,11 +1004,11 @@ export function Settings() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-8 py-4 border-b border-border bg-card">
+      <div className="px-4 sm:px-8 py-4 border-b border-border bg-card">
         <h2 className="text-lg font-semibold text-foreground">Settings</h2>
       </div>
 
-      <div className="flex-1 px-8 py-6 space-y-8 overflow-y-auto">
+      <div className="flex-1 px-4 sm:px-8 py-6 space-y-8 overflow-y-auto">
         {me?.accountUrl && <SignInSecurity accountUrl={me.accountUrl} email={me.email} />}
 
         {/* Connected Accounts */}

@@ -197,7 +197,7 @@ export function Rules() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-8 py-4 border-b border-border bg-card">
+      <div className="px-4 sm:px-8 py-4 border-b border-border bg-card">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Rules</h2>
@@ -212,7 +212,7 @@ export function Rules() {
         </div>
       </div>
 
-      <div className="flex-1 px-8 py-6 overflow-y-auto">
+      <div className="flex-1 px-4 sm:px-8 py-6 overflow-y-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />

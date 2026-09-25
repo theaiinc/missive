@@ -75,7 +75,7 @@ function fetchFolders(): Promise<Folder[]> {
 
 function MissiveSkeleton() {
   return (
-    <div className="flex items-start gap-4 px-8 py-4 border-b border-border">
+    <div className="flex items-start gap-4 px-4 sm:px-8 py-4 border-b border-border">
       <Skeleton className="h-9 w-9 rounded-full" />
       <div className="flex-1 space-y-2">
         <Skeleton className="h-4 w-48" />
@@ -292,6 +292,30 @@ export function Inbox() {
     []
   );
 
+  // Phones have no right-click: holding a message for half a second opens the same menu.
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressedOpen = useRef(false);
+  const longPress = (missive: Missive) => ({
+    onTouchStart: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      pressedOpen.current = false;
+      const { clientX: x, clientY: y } = t;
+      pressTimer.current = setTimeout(() => {
+        pressedOpen.current = true;
+        setMoveToOpen(false);
+        setContextMenu({ missive, x, y });
+        navigator.vibrate?.(10);
+      }, 500);
+    },
+    onTouchMove: () => { if (pressTimer.current) clearTimeout(pressTimer.current); },
+    onTouchEnd: (e: React.TouchEvent) => {
+      if (pressTimer.current) clearTimeout(pressTimer.current);
+      // The press opened the menu: don't also open the message.
+      if (pressedOpen.current) e.preventDefault();
+    },
+  });
+
   const doArchive = useCallback(async (missive: Missive) => {
     const res = await fetch(`/api/v1/missive/${missive.id}/archive`, { method: "POST" });
     setContextMenu(null);
@@ -378,19 +402,20 @@ export function Inbox() {
   return (
     <div className="h-full flex flex-col">
       {/* Header with integrated search */}
-      <div className="px-8 py-4 border-b border-border bg-card space-y-3">
-        <div className="flex items-center gap-4">
-          <h2 className="text-lg font-semibold text-foreground shrink-0">
+      <div className="px-4 sm:px-8 py-3 sm:py-4 border-b border-border bg-card space-y-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="text-lg font-semibold text-foreground shrink-0 min-w-0 truncate">
             {folderName}
           </h2>
 
           {/* Search bar */}
           <div
             className={cn(
-              "flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 transition-all duration-200",
+              // Phones: its own full-width row under the title; wider screens: inline.
+              "order-last basis-full sm:order-none sm:basis-auto flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 transition-all duration-200 min-w-0",
               searchQuery || activeSearch || semantic
-                ? "flex-1 ring-1 ring-primary"
-                : "w-64 focus-within:w-80 focus-within:ring-1 focus-within:ring-primary"
+                ? "sm:flex-1 ring-1 ring-primary"
+                : "sm:w-64 sm:focus-within:w-80 focus-within:ring-1 focus-within:ring-primary"
             )}
           >
             <SearchIcon
@@ -445,7 +470,7 @@ export function Inbox() {
 
           {/* Results count */}
           {!isLoading && !semantic && total != null && (
-            <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
+            <span className="hidden sm:inline text-xs text-muted-foreground shrink-0 whitespace-nowrap">
               {allMissives.length}
               {total > allMissives.length ? ` / ${total}` : ""}
             </span>
@@ -512,7 +537,7 @@ export function Inbox() {
         {semantic && (semanticResult || semanticLoading) && (
           <div
             className={cn(
-              "mx-8 mt-4 p-4 rounded-lg border",
+              "mx-4 sm:mx-8 mt-4 p-4 rounded-lg border",
               semanticResult
                 ? "bg-purple-50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-800"
                 : "bg-muted border-border"
@@ -583,8 +608,9 @@ export function Inbox() {
               key={missive.id}
               onClick={() => navigate(`/thread/${missive.threadId}`)}
               onContextMenu={(e) => handleContextMenu(e, missive)}
+              {...longPress(missive)}
               className={cn(
-                "w-full text-left px-8 py-4 border-b border-border hover:bg-accent/50 transition-colors relative",
+                "w-full text-left px-4 sm:px-8 py-3 sm:py-4 border-b border-border hover:bg-accent/50 transition-colors relative select-none sm:select-auto [-webkit-touch-callout:none]",
                 clsStyle?.bg
               )}
             >
@@ -592,9 +618,9 @@ export function Inbox() {
               {clsStyle && (
                 <div className={cn("absolute left-0 top-0 bottom-0 w-[3px]", clsStyle.bar)} />
               )}
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start justify-between gap-2 sm:gap-4">
                 <div className="flex items-start gap-3 min-w-0 flex-1">
-                  <Avatar className="h-9 w-9 mt-0.5">
+                  <Avatar className="h-9 w-9 mt-0.5 shrink-0">
                     <AvatarFallback className="text-xs bg-muted text-muted-foreground">
                       {missive.from.name?.[0]?.toUpperCase() ??
                         missive.from.address[0]?.toUpperCase() ??
@@ -606,7 +632,7 @@ export function Inbox() {
                       <span className="text-sm font-medium text-foreground truncate">
                         {missive.from.name ?? missive.from.address}
                       </span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                      <Badge variant="secondary" className="hidden sm:inline-flex text-[10px] px-1.5 py-0 h-4">
                         {missive.channel}
                       </Badge>
                     </div>
@@ -640,7 +666,7 @@ export function Inbox() {
                   </span>
                   {missive.classification && clsStyle && (
                     <span className={cn(
-                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
+                      "hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
                       clsStyle.badge
                     )}>
                       <Tag className="w-2.5 h-2.5" />
@@ -649,7 +675,7 @@ export function Inbox() {
                   )}
                   {/* Organization indicators */}
                   {missive.organizations && missive.organizations.length > 0 && (
-                    <div className="flex items-center gap-1">
+                    <div className="hidden md:flex items-center gap-1">
                       {missive.organizations.map((org) => {
                         const style = getItemStyle(org, allOrganizations.items);
                         return (
@@ -671,7 +697,7 @@ export function Inbox() {
                   )}
                   {/* Project indicators */}
                   {missive.projects && missive.projects.length > 0 && (
-                    <div className="flex items-center gap-1">
+                    <div className="hidden md:flex items-center gap-1">
                       {missive.projects.map((proj) => {
                         const style = getItemStyle(proj, allProjects.items);
                         return (
@@ -708,7 +734,11 @@ export function Inbox() {
             <div
               ref={contextRef}
               className="fixed z-50 min-w-[160px] bg-popover border border-border rounded-lg shadow-xl py-1 text-sm"
-              style={{ left: contextMenu.x, top: contextMenu.y }}
+              // Kept on screen: a menu opened near the right or bottom edge (or by long-press on a phone) opens inward.
+              style={{
+                left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 200)),
+                top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 140)),
+              }}
             >
             <button
               onClick={() => folder === "archived" ? doUnarchive(contextMenu.missive) : doArchive(contextMenu.missive)}
@@ -733,7 +763,7 @@ export function Inbox() {
                 Move to...
               </button>
               {moveToOpen && folders && (
-                <div className="absolute left-full top-0 ml-1 min-w-[140px] bg-popover border border-border rounded-lg shadow-xl py-1">
+                <div className="absolute left-0 top-full mt-1 sm:left-full sm:top-0 sm:mt-0 sm:ml-1 min-w-[140px] max-h-[50vh] overflow-y-auto bg-popover border border-border rounded-lg shadow-xl py-1">
                   {folders
                     .filter((f) => f.slug !== folder && f.slug !== "all")
                     .map((f) => (

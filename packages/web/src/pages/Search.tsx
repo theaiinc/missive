@@ -23,7 +23,7 @@ export function Search() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-8 py-4 border-b border-border bg-card space-y-3">
+      <div className="px-4 sm:px-8 py-4 border-b border-border bg-card space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Search</h2>
         <Input
           type="text"
@@ -46,7 +46,7 @@ export function Search() {
         )}
 
         {isLoading && (
-          <div className="px-8 py-8">
+          <div className="px-4 sm:px-8 py-8">
             <p className="text-sm text-muted-foreground animate-pulse">
               Searching...
             </p>
@@ -57,7 +57,7 @@ export function Search() {
           <button
             key={missive.id}
             onClick={() => navigate(`/thread/${missive.threadId}`)}
-            className="w-full text-left px-8 py-4 border-b border-border hover:bg-accent/50 transition-colors"
+            className="w-full text-left px-4 sm:px-8 py-4 border-b border-border hover:bg-accent/50 transition-colors"
           >
             <div className="flex items-start gap-3">
               <Avatar className="h-8 w-8 mt-0.5">

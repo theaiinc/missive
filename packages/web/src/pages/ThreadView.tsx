@@ -39,11 +39,11 @@ export function ThreadView() {
   if (isLoading) {
     return (
       <div className="h-full flex flex-col">
-        <div className="px-8 py-4 border-b border-border bg-card space-y-3">
+        <div className="px-4 sm:px-8 py-4 border-b border-border bg-card space-y-3">
           <Skeleton className="h-6 w-64" />
           <Skeleton className="h-4 w-48" />
         </div>
-        <div className="flex-1 px-8 py-4 space-y-4">
+        <div className="flex-1 px-4 sm:px-8 py-4 space-y-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="border border-border rounded-lg p-4 space-y-3">
               <div className="flex items-center gap-3">
@@ -64,7 +64,7 @@ export function ThreadView() {
   return (
     <div className="h-full flex flex-col">
       {/* Thread Header */}
-      <div className="px-8 py-4 border-b border-border bg-card">
+      <div className="px-4 sm:px-8 py-4 border-b border-border bg-card">
         <div className="flex items-center gap-3 mb-3">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
             <ArrowLeft className="w-4 h-4 mr-1" />
@@ -119,7 +119,7 @@ export function ThreadView() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-8 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-4 space-y-4">
         {data?.missives.map((missive, index) => (
           <EmailCard key={missive.id} missive={missive} />
         ))}
