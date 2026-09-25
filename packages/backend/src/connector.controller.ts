@@ -80,6 +80,52 @@ export class ConnectorController {
     };
   }
 
+  // ── Google Calendar (a separate connection; see GCAL_SCOPES) ──
+
+  @Get("gcal/auth")
+  getGcalAuthUrl(@Req() req: Request): { url: string } {
+    if (!process.env.GCAL_CLIENT_ID || !process.env.GCAL_CLIENT_SECRET) {
+      throw new ServiceUnavailableException("Connecting Google Calendar isn't set up on this server yet.");
+    }
+    return { url: this.store.getGcalAuthUrl(siteFor(req).appUrl) };
+  }
+
+  @Post("gcal/token")
+  async exchangeGcalToken(@Req() req: Request, @Body() body: { code: string }) {
+    if (!body.code) return { error: "missing_code" };
+    try {
+      const oauth2 = this.store.createCalendarOAuthClient(siteFor(req).appUrl);
+      const { tokens } = await oauth2.getToken(body.code);
+      if (!String(tokens.scope ?? "").includes("calendar.readonly")) return { error: "calendar_access_not_granted" };
+      oauth2.setCredentials(tokens);
+      const { data: profile } = await google.oauth2({ version: "v2", auth: oauth2 as any }).userinfo.get();
+      const connector = await this.store.save("gcal", {
+        provider: "gcal",
+        label: profile.email ?? "Google Calendar",
+        email: profile.email ?? "unknown",
+        tokens: { access_token: tokens.access_token!, refresh_token: tokens.refresh_token ?? undefined, expiry_date: tokens.expiry_date ?? undefined },
+        connectedAt: new Date().toISOString(),
+      });
+      return { connected: true, id: connector.id, email: profile.email };
+    } catch (err) {
+      console.error("Google Calendar token exchange error:", safeError(err));
+      return { error: "token_exchange_failed" };
+    }
+  }
+
+  @Get("gcal/status")
+  async getGcalStatus() {
+    const accounts = await this.store.list("gcal");
+    return { connected: accounts.length > 0, accounts: accounts.map((a) => ({ id: a.id, email: a.email, connectedAt: a.connectedAt })) };
+  }
+
+  @Delete("gcal/disconnect")
+  async disconnectGcal(@Body() body: { id: string }) {
+    if (!body.id) return { error: "missing_id" };
+    await this.store.remove(body.id);
+    return { disconnected: true };
+  }
+
   // ── Gmail Disconnect ──
 
   @Delete("gmail/disconnect")

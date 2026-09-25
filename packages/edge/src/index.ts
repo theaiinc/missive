@@ -42,6 +42,9 @@ export interface Env {
   OUTLOOK_CLIENT_ID?: string;
   OUTLOOK_CLIENT_SECRET?: string;
   OUTLOOK_TENANT?: string;
+  /** Optional: the Google Calendar OAuth app (read-only calendars), separate from Gmail's. Redirect: APP_URL/oauth. */
+  GCAL_CLIENT_ID?: string;
+  GCAL_CLIENT_SECRET?: string;
   /** Secrets for the MISSIVE_SITES clients: AEGIS_CLIENT_SECRET_<CLIENT_ID>. */
   [secret: `AEGIS_CLIENT_SECRET_${string}`]: string | undefined;
 }
@@ -103,6 +106,8 @@ export class MissiveApi extends Container<Env> {
       OUTLOOK_CLIENT_ID: env.OUTLOOK_CLIENT_ID ?? "",
       OUTLOOK_CLIENT_SECRET: env.OUTLOOK_CLIENT_SECRET ?? "",
       OUTLOOK_TENANT: env.OUTLOOK_TENANT ?? "",
+      GCAL_CLIENT_ID: env.GCAL_CLIENT_ID ?? "",
+      GCAL_CLIENT_SECRET: env.GCAL_CLIENT_SECRET ?? "",
     };
   }
 }
