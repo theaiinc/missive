@@ -51,7 +51,7 @@ export function Admin() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-8 py-4 border-b border-border bg-card">
+      <div className="px-4 sm:px-8 py-4 border-b border-border bg-card">
         <h2 className="text-lg font-semibold text-foreground">Admin console</h2>
         <p className="text-xs text-muted-foreground">Organizations, accounts, mailboxes and groups across every domain Missive hosts.</p>
       </div>
@@ -73,7 +73,7 @@ export function Admin() {
             </button>
           ))}
         </nav>
-        <div className="flex-1 overflow-y-auto px-8 py-6">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6">
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
           {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
           {data && section === "organizations" && <Organizations data={data} />}
