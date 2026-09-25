@@ -309,7 +309,10 @@ export class ConnectorStore {
     return Promise.all(rows.map(rowToConnector));
   }
 
+  /** Disconnects an account: its tokens, and the calendars copied from it (their events cascade). */
   async remove(id: string): Promise<void> {
+    await this.pg.query("DELETE FROM calendars WHERE connector_id = $1", [id]);
+    await this.pg.query("DELETE FROM calendar_accounts WHERE connector_id = $1", [id]);
     await this.pg.query("DELETE FROM connectors WHERE id = $1", [id]);
   }
 
