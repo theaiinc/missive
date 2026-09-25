@@ -15,6 +15,8 @@ async function bootstrap() {
   app.set("trust proxy", true);
   // Inbound mail arrives as the raw message (see MailboxController.inbound).
   app.useBodyParser("raw", { type: "message/rfc822", limit: "40mb" });
+  // Calendar imports arrive as the .ics file itself (see CalendarController.importIcs).
+  app.useBodyParser("text", { type: "text/calendar", limit: "10mb" });
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN ?? "http://localhost:5173",

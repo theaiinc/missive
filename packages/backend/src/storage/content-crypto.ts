@@ -20,6 +20,8 @@ export const ENCRYPTED_COLUMNS = {
   digests: ["summary", "items"],
   // Rule conditions quote addresses and subjects the user typed.
   rules: ["conditions"],
+  calendars: ["name", "source_url", "external_id"],
+  calendar_events: ["summary", "description", "location", "organizer", "attendees", "url"],
 } as const;
 
 export type EncryptedTable = keyof typeof ENCRYPTED_COLUMNS;
