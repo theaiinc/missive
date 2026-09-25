@@ -22,7 +22,7 @@ describe("llm", () => {
 
   it("describes Workers AI with today's use when hosted", async () => {
     vi.stubEnv("LM_STUDIO_BASE_URL", "https://mail.example/internal/ai/v1");
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", provider: "x", spent: 120, limit: 4500, left: 4380 })));
+    const fetch = vi.fn(async (_url: string) => new Response(JSON.stringify({ model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", provider: "x", spent: 120, limit: 4500, left: 4380 })));
     vi.stubGlobal("fetch", fetch);
     const info = await llmInfo();
     expect(fetch.mock.calls[0]![0]).toBe("https://mail.example/internal/ai/usage");
