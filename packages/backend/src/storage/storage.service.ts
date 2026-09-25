@@ -293,6 +293,35 @@ export class StorageService {
       .map((r) => ({ id: r.id }));
   }
 
+  /** Messages in a folder from exactly this sender (sender_address is encrypted, so matched here). */
+  async findMissivesBySender(
+    address: string,
+    folder: string,
+    excludeId: string,
+    limit = 50,
+  ): Promise<{ id: string }[]> {
+    const { rows } = await this.pg.query(
+      `SELECT id, owner_id, sender_address FROM missives WHERE folder = $1 AND id <> $2 ORDER BY received_at DESC`,
+      [folder, excludeId],
+    );
+    const wanted = address.trim().toLowerCase();
+    return (await openRows('missives', rows))
+      .filter((r) => String(r.sender_address ?? '').trim().toLowerCase() === wanted)
+      .slice(0, limit)
+      .map((r) => ({ id: r.id }));
+  }
+
+  /** Files messages as spam (folder and classification), or takes them back to the inbox. */
+  async setSpam(ids: string[], spam: boolean): Promise<void> {
+    if (!ids.length) return;
+    await this.pg.query(
+      spam
+        ? `UPDATE missives SET folder = 'spam', classification = 'spam', updated_at = NOW() WHERE id = ANY($1::text[])`
+        : `UPDATE missives SET folder = 'inbox', classification = CASE WHEN classification = 'spam' THEN 'other' ELSE classification END, updated_at = NOW() WHERE id = ANY($1::text[])`,
+      [ids],
+    );
+  }
+
   /** Move multiple missives to a folder in one query. */
   async batchMoveMissives(ids: string[], folder: string): Promise<void> {
     await this.pg.query(
@@ -421,7 +450,7 @@ function classificationToFolder(classification: string): string | null {
     notification: "inbox",
     newsletter: "archived",
     meeting: "archived",
-    spam: "archived",
+    spam: "spam",
     other: "archived",
   };
   return map[classification?.toLowerCase()] ?? null;

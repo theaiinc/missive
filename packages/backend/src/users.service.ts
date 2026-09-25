@@ -123,6 +123,11 @@ export class UsersService {
   }
 
   /** Everyone, for background jobs that run once per user. */
+  /** Adds system folders introduced since people last signed in (e.g. Spam). */
+  async ensureAllFolders(): Promise<void> {
+    for (const user of await this.all()) await this.pg.ensureUserFolders(user.id);
+  }
+
   async all(): Promise<RequestUser[]> {
     const { rows } = await this.pg.systemQuery(`SELECT id, email, name FROM users ORDER BY created_at`);
     return Promise.all(rows.map(rowToUser));

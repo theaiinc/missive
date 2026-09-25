@@ -15,6 +15,7 @@ const SYSTEM_FOLDERS = [
   { slug: "leads", name: "Leads", icon: "user-plus", ord: 5 },
   { slug: "support", name: "Support", icon: "life-buoy", ord: 6 },
   { slug: "personal", name: "Personal", icon: "user", ord: 7 },
+  { slug: "spam", name: "Spam", icon: "shield-alert", ord: 8 },
 ];
 
 @Injectable()

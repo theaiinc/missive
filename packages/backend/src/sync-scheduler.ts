@@ -34,6 +34,8 @@ export class SyncScheduler implements OnModuleInit {
   }
 
   onModuleInit() {
+    this.users.ensureAllFolders().catch((err) => this.logger.error("Folder setup error:", safeError(err)));
+
     // Run initial organizer pass shortly after startup (5s)
     setTimeout(() => this.forEachUser(() => this.runOrganizer()), 5_000);
 
