@@ -16,7 +16,7 @@ type Cal = {
   id: string; name: string; color: string; source: Source; sourceUrl: string | null; connectorId: string | null;
   visible: boolean; readOnly: boolean; lastSyncedAt: string | null; lastError: string | null;
 };
-type Account = { connectorId: string; provider: "gmail" | "outlook"; email: string; lastSyncedAt: string | null; lastError: string | null };
+type Account = { connectorId: string; provider: "gcal" | "outlook"; email: string; lastSyncedAt: string | null; lastError: string | null };
 type Occ = {
   id: string; eventId: string; calendarId: string; occurrence: string; start: string; end: string; allDay: boolean; recurring: boolean;
   summary: string | null; description: string | null; location: string | null; organizer: string | null;
@@ -341,7 +341,7 @@ function CalendarList({ calendars, accounts, onChanged, className }: { calendars
       ))}
       <div>
         <div className="px-2 mb-1 text-xs font-semibold uppercase text-muted-foreground">Connected accounts</div>
-        {!accounts.length && <p className="px-2 text-xs text-muted-foreground">Connect Gmail or Outlook in Settings to see their calendars.</p>}
+        {!accounts.length && <p className="px-2 text-xs text-muted-foreground mb-1">See a Google or Microsoft account's calendars here (read-only).</p>}
         {accounts.map((a) => (
           <div key={a.connectorId} className="mb-2">
             <div className="flex items-center gap-2 px-2 py-1 text-xs">
@@ -353,11 +353,21 @@ function CalendarList({ calendars, accounts, onChanged, className }: { calendars
               >
                 <RefreshCw className={cn("w-3.5 h-3.5", busy === a.connectorId && "animate-spin")} />
               </button>
+              {a.provider === "gcal" && (
+                <button
+                  title="Disconnect"
+                  onClick={() => window.confirm(`Disconnect ${a.email}? Its calendars are removed from Missive.`) &&
+                    run(a.connectorId, () => fetch("/api/v1/connector/gcal/disconnect", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: a.connectorId }) }))}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             {a.lastError ? (
               <div className="mx-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
                 {a.lastError}
-                <button className="block mt-1 underline font-medium" onClick={() => reconnect(a.provider)}>Reconnect {a.provider === "gmail" ? "Google" : "Microsoft"}</button>
+                <button className="block mt-1 underline font-medium" onClick={() => reconnect(a.provider)}>Reconnect {a.provider === "gcal" ? "Google" : "Microsoft"}</button>
               </div>
             ) : !a.lastSyncedAt ? (
               <p className="px-2 text-[11px] text-muted-foreground">Not synced yet — press sync.</p>
@@ -365,6 +375,10 @@ function CalendarList({ calendars, accounts, onChanged, className }: { calendars
             {calendars.filter((c) => c.connectorId === a.connectorId).map((c) => <Row key={c.id} c={c} />)}
           </div>
         ))}
+        <div className="flex flex-col gap-1 px-2 mt-1">
+          <button onClick={() => reconnect("gcal")} className="text-left text-xs text-primary hover:underline">+ Connect Google Calendar</button>
+          <button onClick={() => reconnect("outlook")} className="text-left text-xs text-primary hover:underline">+ Connect Outlook</button>
+        </div>
       </div>
     </aside>
   );

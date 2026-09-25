@@ -24,10 +24,11 @@ export function OAuthCallback() {
       .then((res) => res.json())
       .then((data) => {
         if (data.error) {
-          navigate(`/settings?error=${data.error}`);
+          navigate(`${state === "gcal" ? "/calendar" : "/settings"}?error=${data.error}`);
         } else {
+          // A calendar connection returns to the calendar, where its calendars appear.
           navigate(
-            `/settings?connected=${state}&email=${encodeURIComponent(data.email ?? "")}`
+            `${state === "gcal" ? "/calendar" : "/settings"}?connected=${state}&email=${encodeURIComponent(data.email ?? "")}`
           );
         }
       })

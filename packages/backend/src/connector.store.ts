@@ -24,6 +24,19 @@ export interface StoredConnector {
 const oauthRedirect = (appUrl: string, override: string | undefined) => override || `${appUrl}/oauth`;
 const gmailRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.GMAIL_REDIRECT_URI);
 const outlookRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.OUTLOOK_REDIRECT_URI);
+const gcalRedirect = (appUrl: string) => oauthRedirect(appUrl, process.env.GCAL_REDIRECT_URI);
+
+/**
+ * Google Calendar is its own connection with its own OAuth app (GCAL_CLIENT_ID):
+ * read-only calendar access is a "sensitive" scope that can pass Google's
+ * standard review, while Gmail's scopes are "restricted" and keep the Gmail
+ * app in testing. Keeping them apart lets anyone connect a calendar.
+ */
+export const GCAL_SCOPES = [
+  "openid",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/calendar.readonly",
+];
 
 @Injectable()
 export class ConnectorStore {
@@ -51,8 +64,6 @@ export class ConnectorStore {
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/userinfo.email",
-        // The account's calendars, read-only (see calendar/providers.ts).
-        "https://www.googleapis.com/auth/calendar.readonly",
       ],
     });
   }
@@ -61,6 +72,40 @@ export class ConnectorStore {
     const oauth2 = this.createOAuth2Client();
     oauth2.setCredentials(connector.tokens);
     return oauth2;
+  }
+
+  // ── Google Calendar OAuth (its own app; see GCAL_SCOPES) ──
+
+  createCalendarOAuthClient(appUrl = mainSite().appUrl): Auth.OAuth2Client {
+    return new google.auth.OAuth2(process.env.GCAL_CLIENT_ID, process.env.GCAL_CLIENT_SECRET, gcalRedirect(appUrl));
+  }
+
+  getGcalAuthUrl(appUrl: string): string {
+    return this.createCalendarOAuthClient(appUrl).generateAuthUrl({
+      access_type: "offline",
+      prompt: "consent",
+      state: "gcal",
+      scope: GCAL_SCOPES,
+    });
+  }
+
+  /** A valid Google Calendar access token, refreshed (and saved) when it has expired. */
+  async getValidGcalToken(connectorId: string): Promise<string> {
+    const connector = await this.get(connectorId);
+    if (!connector || connector.provider !== "gcal") throw new Error(`Invalid or missing Google Calendar connector: ${connectorId}`);
+    const tokens = connector.tokens;
+    if (tokens.access_token && Number(tokens.expiry_date ?? 0) > Date.now() + 60000) return tokens.access_token;
+    if (!tokens.refresh_token) throw new Error("No refresh token available — reconnect Google Calendar");
+    const oauth2 = this.createCalendarOAuthClient();
+    oauth2.setCredentials({ refresh_token: tokens.refresh_token });
+    const { credentials } = await oauth2.refreshAccessToken();
+    const fresh = {
+      access_token: credentials.access_token!,
+      refresh_token: credentials.refresh_token ?? tokens.refresh_token,
+      expiry_date: credentials.expiry_date ?? undefined,
+    };
+    await this.save("gcal", { provider: "gcal", label: connector.label, email: connector.email, tokens: fresh, connectedAt: connector.connectedAt });
+    return fresh.access_token;
   }
 
   /**

@@ -247,7 +247,8 @@ export class CalendarService {
     ]);
     const byId = new Map(state.rows.map((r: any) => [r.connector_id, r]));
     return connectors
-      .filter((c) => c.provider === "gmail" || c.provider === "outlook")
+      // Google calendars come through their own connection (gcal), not Gmail's.
+      .filter((c) => c.provider === "gcal" || c.provider === "outlook")
       .map((c) => {
         const s: any = byId.get(c.id);
         return { connectorId: c.id, provider: c.provider, email: c.email, lastSyncedAt: s?.last_synced_at?.toISOString?.() ?? null, lastError: s?.last_error ?? null };
@@ -255,7 +256,7 @@ export class CalendarService {
   }
 
   private async token(c: StoredConnector): Promise<string> {
-    return c.provider === "gmail" ? this.connectors.getValidGmailToken(c.id) : this.connectors.getValidOutlookToken(c.id);
+    return c.provider === "gcal" ? this.connectors.getValidGcalToken(c.id) : this.connectors.getValidOutlookToken(c.id);
   }
 
   /**
@@ -265,8 +266,9 @@ export class CalendarService {
    */
   async syncAccount(connectorId: string): Promise<{ calendars: number; events: number }> {
     const connector = await this.connectors.get(connectorId);
-    if (!connector || (connector.provider !== "gmail" && connector.provider !== "outlook")) throw new NotFoundException("No such account");
-    const provider = connector.provider as "gmail" | "outlook";
+    if (!connector || (connector.provider !== "gcal" && connector.provider !== "outlook")) throw new NotFoundException("No such account");
+    // Calendars keep the source "gmail" for Google (see 020_calendar.sql).
+    const provider: "gmail" | "outlook" = connector.provider === "gcal" ? "gmail" : "outlook";
     try {
       const token = await this.token(connector);
       const remote: ProviderCalendar[] = provider === "gmail" ? await googleCalendars(token) : await outlookCalendars(token);

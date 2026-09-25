@@ -48,6 +48,8 @@
   "r2_buckets": [{ "binding": "INBOUND", "bucket_name": "missive-inbound" }],
   "vars": {
     "APP_URL": "https://missive.theaiinc.com",
+    // Google Calendar's own OAuth app (project missive-calendar); GCAL_CLIENT_SECRET is a secret.
+    "GCAL_CLIENT_ID": "1063196567606-cbhjqvavvpkncr8pjibjhifudg7d9gg9.apps.googleusercontent.com",
     "AEGIS_ISSUER": "https://id.theaiinc.com",
     "AEGIS_CLIENT_ID": "missive",
     // mail.bugmole.com signs in with the Bugmole tenant's own client.
