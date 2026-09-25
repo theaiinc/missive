@@ -1,9 +1,18 @@
 import { openRow, openRows, seal, sealJson } from "./storage/content-crypto";
+import { llmBaseUrl, llmHeaders, llmModel } from "./llm";
 import { safeError } from "./log-safe";
 import { Injectable, Logger } from "@nestjs/common";
 import { StorageService } from "./storage/storage.service";
 import { PostgresService } from "./storage/postgres.service";
 import { SystemEventService } from "./system-event.service";
+
+/** Messages classified per model call. */
+const BATCH_SIZE = 15;
+const DIGEST_INTERVAL_MS = 60 * 60 * 1000;
+const organizerSince = (): string | null => {
+  const v = process.env.ORGANIZER_SINCE;
+  return v && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
+};
 
 export interface DigestItem {
   threadId: string;
@@ -47,10 +56,8 @@ export class OrganizerService {
     private readonly pg: PostgresService,
     private readonly events: SystemEventService
   ) {
-    this.baseUrl =
-      process.env.LM_STUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1";
-    this.model =
-      process.env.LM_STUDIO_MODEL ?? "google/gemma-4-26b-a4b-qat";
+    this.baseUrl = llmBaseUrl();
+    this.model = llmModel();
     this.timeoutMs = parseInt(process.env.LM_STUDIO_TIMEOUT_MS ?? "120000", 10);
   }
 
@@ -65,14 +72,18 @@ export class OrganizerService {
     this._isRunning = true;
     try {
       // Find missives without classification, or those classified as "other" that never got folder-mapped
+      // ORGANIZER_SINCE (an ISO date) leaves mail from before the organizer
+      // was switched on where it is, rather than re-filing a whole backlog.
+      const since = organizerSince();
       const { rows } = await this.pg.query(
         `SELECT * FROM missives WHERE channel = 'email'
          AND (
            (classification IS NULL OR classification = '')
            OR (classification = 'other' AND folder = 'inbox')
          )
+         AND ($2::timestamptz IS NULL OR received_at >= $2::timestamptz)
          ORDER BY received_at DESC LIMIT $1`,
-        [limit]
+        [Math.min(limit, BATCH_SIZE), since]
       );
 
       if (rows.length === 0) return 0;
@@ -153,8 +164,11 @@ export class OrganizerService {
   async generateDigest(): Promise<Digest | null> {
     // Find last digest end time
     const lastRes = await this.pg.query(
-      "SELECT period_end FROM digests ORDER BY created_at DESC LIMIT 1"
+      "SELECT period_end, created_at FROM digests ORDER BY created_at DESC LIMIT 1"
     );
+    // At most one digest an hour: each one is a model call.
+    const lastAt = lastRes.rows[0]?.created_at as Date | undefined;
+    if (lastAt && Date.now() - new Date(lastAt).getTime() < DIGEST_INTERVAL_MS) return null;
     const since =
       lastRes.rows.length > 0
         ? (lastRes.rows[0].period_end as Date).toISOString()
@@ -237,8 +251,9 @@ export class OrganizerService {
   private async batchClassify(
     rows: any[]
   ): Promise<(ClassifyResult & { missiveId: string; threadId: string })[]> {
+    // Only the messages actually shown to the model get a result.
+    rows = rows.slice(0, BATCH_SIZE);
     const emailList = rows
-      .slice(0, 15)
       .map(
         (r, i) =>
           `IDX${i}: Subject: "${r.subject}", From: ${r.sender_name ?? r.sender_address}, Body preview: ${(r.body ?? "").slice(0, 200)}`
@@ -269,7 +284,7 @@ IDX2 support=support|customer refund request`;
         `${this.baseUrl}/chat/completions`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: llmHeaders(),
           body: JSON.stringify({
             model: this.model,
             messages: [{ role: "user", content: prompt }],
@@ -281,13 +296,10 @@ IDX2 support=support|customer refund request`;
       );
 
       if (!response.ok) {
-        this.logger.warn(`LM Studio classify returned ${response.status}, using fallback`);
-        return rows.map((r) => ({
-          missiveId: r.id,
-          threadId: r.thread_id,
-          classification: "other",
-          folder: null,
-        }));
+        // Out of today's allowance, or the model is down: leave the mail
+        // where it is and try again next run, rather than filing it all as "other".
+        this.logger.warn(`Classify model returned ${response.status}; will retry next run`);
+        return [];
       }
 
       const data = (await response.json()) as Record<string, any>;
@@ -362,12 +374,7 @@ IDX2 support=support|customer refund request`;
       return results;
     } catch (err) {
       this.logger.error(`Batch classify error: ${safeError(err)}`);
-      return rows.map((r) => ({
-        missiveId: r.id,
-        threadId: r.thread_id,
-        classification: "other",
-        folder: null,
-      }));
+      return [];
     }
   }
 
@@ -430,7 +437,7 @@ IDX2 importance=low|reason`;
         `${this.baseUrl}/chat/completions`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: llmHeaders(),
           body: JSON.stringify({
             model: this.model,
             messages: [{ role: "user", content: prompt }],

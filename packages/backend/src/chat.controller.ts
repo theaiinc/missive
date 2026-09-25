@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Body,
   Res,
@@ -7,10 +8,17 @@ import {
 } from "@nestjs/common";
 import { ChatService, type ChatMessage } from "./chat.service";
 import type { Response } from "express";
+import { llmInfo } from "./llm";
 
 @Controller("api/v1/chat")
 export class ChatController {
   constructor(private readonly chat: ChatService) {}
+
+  /** The model behind the organizer and assistant, for Settings. */
+  @Get("model")
+  model() {
+    return llmInfo();
+  }
 
   @Post("stream")
   async streamChat(
@@ -32,7 +40,7 @@ export class ChatController {
       if (!res.headersSent) {
         res
           .status(HttpStatus.BAD_GATEWAY)
-          .json({ error: "Chat service unavailable. Is LM Studio running?" });
+          .json({ error: "The AI assistant is unavailable right now. Try again in a moment." });
       } else {
         try {
           res.write(`data: ${JSON.stringify({ error: "Chat error" })}\n\n`);

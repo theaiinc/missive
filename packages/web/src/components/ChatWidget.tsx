@@ -190,7 +190,7 @@ export function ChatWidget() {
           ...prev,
           {
             role: "assistant",
-            content: err.error ?? "Something went wrong. Is LM Studio running?",
+            content: err.error ?? "Something went wrong. Try again in a moment.",
           },
         ]);
         setStreaming(false);
@@ -281,7 +281,7 @@ export function ChatWidget() {
           {
             role: "assistant",
             content:
-              "Request timed out. LM Studio may still be loading the model. Try again in a moment.",
+              "Request timed out. The model may be busy. Try again in a moment.",
           },
         ]);
       }

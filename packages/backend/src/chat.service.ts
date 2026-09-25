@@ -1,4 +1,5 @@
 import { Injectable, HttpException, HttpStatus } from "@nestjs/common";
+import { llmBaseUrl, llmHeaders, llmModel } from "./llm";
 import { StorageService } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { ConnectorStore } from "./connector.store";
@@ -26,10 +27,8 @@ export class ChatService {
     private readonly rules: RuleService,
     private readonly connectors: ConnectorStore
   ) {
-    this.baseUrl =
-      process.env.LM_STUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1";
-    this.model =
-      process.env.LM_STUDIO_MODEL ?? "google/gemma-4-26b-a4b-qat";
+    this.baseUrl = llmBaseUrl();
+    this.model = llmModel();
     this.timeoutMs = parseInt(process.env.LM_STUDIO_TIMEOUT_MS ?? "120000", 10);
   }
 
@@ -376,7 +375,7 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
     } catch (err: any) {
       if (err?.name === "AbortError") {
         throw new HttpException(
-          "LM Studio request timed out. The model may be loading or busy.",
+          "The AI model timed out. It may be busy; try again in a moment.",
           HttpStatus.GATEWAY_TIMEOUT,
         );
       }
@@ -409,7 +408,7 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
       `${this.baseUrl}/chat/completions`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: llmHeaders(),
         body,
         timeout: this.timeoutMs,
       }
@@ -418,7 +417,7 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new HttpException(
-        `LM Studio error (${response.status}): ${text}`,
+        `AI model error (${response.status}): ${text}`,
         HttpStatus.BAD_GATEWAY
       );
     }
@@ -504,7 +503,7 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
       `${this.baseUrl}/chat/completions`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: llmHeaders(),
         body: JSON.stringify({
           model: this.model,
           messages: [systemMessage, ...messages],
@@ -519,7 +518,7 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new HttpException(
-        `LM Studio error (${response.status}): ${text}`,
+        `AI model error (${response.status}): ${text}`,
         HttpStatus.BAD_GATEWAY
       );
     }

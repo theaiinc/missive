@@ -1,12 +1,15 @@
 import { Container } from "@cloudflare/containers";
 // Bundled from source (the Worker has no build step for core); same format as the backend.
 import { DataCipher } from "../../core/src/crypto";
+import { AI_MODEL, aiUsage, chatCompletions, type AiEnv } from "./ai";
+
+export { AiBudget } from "./ai";
 
 // One API instance: it runs the sync scheduler, which must not run twice.
 const INSTANCE = "api";
 const API_PORT = 4000;
 
-export interface Env {
+export interface Env extends AiEnv {
   API: DurableObjectNamespace<MissiveApi>;
   ASSETS: Fetcher;
   EMAIL: SendEmail;
@@ -24,6 +27,8 @@ export interface Env {
    */
   FORWARD_UNKNOWN?: string;
   MISSIVE_ORGANIZER?: string;
+  /** The organizer only files mail received from this time on (ISO date). */
+  ORGANIZER_SINCE?: string;
   // Secrets
   DATABASE_URL: string;
   SESSION_SECRET: string;
@@ -99,6 +104,11 @@ export class MissiveApi extends Container<Env> {
       EDGE_URL: env.APP_URL,
       EDGE_SECRET: env.EDGE_SECRET,
       MISSIVE_ORGANIZER: env.MISSIVE_ORGANIZER ?? "",
+      // The organizer and chat assistant use Workers AI through this Worker (ai.ts).
+      LM_STUDIO_BASE_URL: `${env.APP_URL}/internal/ai/v1`,
+      LM_STUDIO_MODEL: AI_MODEL,
+      LLM_API_KEY: env.EDGE_SECRET,
+      ORGANIZER_SINCE: env.ORGANIZER_SINCE ?? "",
       // Connected Gmail/Outlook/IMAP accounts sync every minute (kept awake by the cron below).
       AUTO_SYNC_INTERVAL_MS: "60000",
       GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "",
@@ -173,6 +183,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/internal/send" && request.method === "POST") return send(request, env);
+    if (url.pathname.startsWith("/internal/ai/")) {
+      if (!bearerMatches(request, env.EDGE_SECRET)) return json({ error: "Not allowed" }, 401);
+      if (url.pathname === "/internal/ai/v1/chat/completions" && request.method === "POST") return chatCompletions(request, env);
+      if (url.pathname === "/internal/ai/usage" && request.method === "GET") return aiUsage(env);
+    }
     if (url.pathname.startsWith("/internal/")) return json({ error: "Not found" }, 404);
     // /api/* and /auth/* go to the API; everything else is the web app
     // (run_worker_first in wrangler.jsonc sends only these paths here).
