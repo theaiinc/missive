@@ -1,11 +1,11 @@
-import { Outlet, NavLink, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck } from "lucide-react";
+import { Outlet, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck, CalendarDays, Menu, X } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import type { Folder } from "@theaiinc/missive-core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChatWidget } from "./ChatWidget";
 import { Toaster } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
@@ -27,6 +27,7 @@ const folderIcons: Record<string, React.ElementType> = {
 };
 
 const navItems = [
+  { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/rules", label: "Rules", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -60,6 +61,10 @@ function LayoutShell() {
     queryFn: fetchFolders,
   });
   const [showNewFolder, setShowNewFolder] = useState(false);
+  // Below md the sidebar is a slide-out menu; it closes on navigation.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+  useEffect(() => setMenuOpen(false), [location.pathname, location.search]);
   const [newFolderName, setNewFolderName] = useState("");
 
   const { theme, toggleTheme } = useTheme();
@@ -85,9 +90,16 @@ function LayoutShell() {
   };
 
   return (
-      <div className="flex h-screen bg-background">
+      <div className="flex h-dvh bg-background">
+        {menuOpen && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" aria-hidden="true" onClick={() => setMenuOpen(false)} />}
         {/* Sidebar */}
-        <aside className="w-56 border-r border-border bg-card flex flex-col">
+        <aside
+          id="sidebar"
+          className={cn(
+            "w-56 border-r border-border bg-card flex flex-col shrink-0 fixed inset-y-0 left-0 z-50 transition-transform md:static md:translate-x-0",
+            menuOpen ? "translate-x-0" : "-translate-x-full invisible md:visible",
+          )}
+        >
         <div className="px-5 py-4">
           <button
             onClick={() => navigate("/inbox")}
@@ -247,7 +259,14 @@ function LayoutShell() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-hidden flex flex-col relative">
+      <main className="flex-1 min-w-0 overflow-hidden flex flex-col relative">
+        <div className="md:hidden flex items-center gap-2 h-12 px-2 border-b border-border bg-card shrink-0">
+          <button onClick={() => setMenuOpen((o) => !o)} className="p-2 text-muted-foreground hover:text-foreground" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="sidebar">
+            {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+          <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center"><Mail className="w-3.5 h-3.5 text-primary-foreground" /></div>
+          <span className="text-sm font-semibold">Missive</span>
+        </div>
         {/* Organizer activity indicator */}
         {organizerRunning && (
           <div className="absolute top-0 left-0 right-0 z-50 h-[2px] overflow-hidden">

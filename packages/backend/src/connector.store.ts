@@ -51,6 +51,8 @@ export class ConnectorStore {
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/userinfo.email",
+        // The account's calendars, read-only (see calendar/providers.ts).
+        "https://www.googleapis.com/auth/calendar.readonly",
       ],
     });
   }
@@ -116,7 +118,7 @@ export class ConnectorStore {
     const clientId = process.env.OUTLOOK_CLIENT_ID;
     const redirectUri = outlookRedirect(appUrl);
     const scope =
-      "openid profile email User.Read Mail.Read Mail.ReadBasic Mail.Send offline_access IMAP.AccessAsUser.All";
+      "openid profile email User.Read Mail.Read Mail.ReadBasic Mail.Send offline_access IMAP.AccessAsUser.All Calendars.Read";
     return (
       `https://login.microsoftonline.com/${this.outlookTenant}/oauth2/v2.0/authorize?` +
       new URLSearchParams({

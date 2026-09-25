@@ -7,6 +7,7 @@ import { RuleService } from "./rule.service";
 import { SystemEventService } from "./system-event.service";
 import { UsersService } from "./users.service";
 import { runAsUser } from "./request-context";
+import { CalendarService } from "./calendar/calendar.service";
 
 /**
  * Periodically syncs all connected accounts on a 5-minute interval,
@@ -26,7 +27,8 @@ export class SyncScheduler implements OnModuleInit {
     private readonly organizer: OrganizerService,
     private readonly rules: RuleService,
     private readonly events: SystemEventService,
-    private readonly users: UsersService
+    private readonly users: UsersService,
+    private readonly calendar: CalendarService
   ) {
     this.intervalMs = parseInt(process.env.AUTO_SYNC_INTERVAL_MS ?? "300000", 10);
   }
@@ -84,6 +86,13 @@ export class SyncScheduler implements OnModuleInit {
       }
     } catch (err) {
       this.logger.error("Auto-sync Outlook error:", safeError(err));
+    }
+
+    // Calendars: .ics subscriptions and connected accounts, each only when due.
+    try {
+      await this.calendar.refreshDue();
+    } catch (err) {
+      this.logger.error("Calendar refresh error:", safeError(err));
     }
 
     try {

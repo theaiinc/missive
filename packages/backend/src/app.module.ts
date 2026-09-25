@@ -27,11 +27,13 @@ import { MailboxController } from "./mailbox.controller";
 import { InviteController } from "./invite.controller";
 import { AdminAccess, AdminController } from "./admin.controller";
 import { GroupsService } from "./groups.service";
+import { CalendarController } from "./calendar/calendar.controller";
+import { CalendarService } from "./calendar/calendar.service";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController],
-  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService],
+  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController],
+  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule implements NestModule {
