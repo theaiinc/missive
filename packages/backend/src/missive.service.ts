@@ -101,6 +101,23 @@ export class MissiveService {
    * Find missives with the same sender domain in the source folder and move them.
    * Returns the IDs of auto-moved missives.
    */
+  /**
+   * Marks a message as spam (or not spam), with the other messages from the
+   * same sender address in its folder. By address, not domain: a domain
+   * like gmail.com is shared by people you want to hear from.
+   */
+  async markSpam(id: string, spam: boolean): Promise<MoveResult> {
+    const missive = await this.storage.getMissive(id);
+    if (!missive) return { moved: 0, autoMoved: 0, autoMovedIds: [] };
+    const sourceFolder = missive.folder ?? "inbox";
+    const address = missive.from.address;
+    const others = address && sourceFolder !== (spam ? "spam" : "inbox")
+      ? (await this.storage.findMissivesBySender(address, sourceFolder, id)).map((r) => r.id)
+      : [];
+    await this.storage.setSpam([id, ...others], spam);
+    return { moved: 1, autoMoved: others.length, autoMovedIds: others };
+  }
+
   private async autoMoveSimilar(
     reference: Missive,
     sourceFolder: string,

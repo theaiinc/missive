@@ -270,9 +270,9 @@ IDX0 classification=folder|reason
 IDX1 classification=folder|reason
 
 Where classification is one of: invoice, support, newsletter, notification, meeting, personal, spam, other
-And folder is one of: inbox, invoices, complaints, leads, support, personal, archived
+And folder is one of: inbox, invoices, complaints, leads, support, personal, archived, spam
 
-If the email is an invoice, set folder=invoices. If it's a support request, set folder=support. If it's a lead, set folder=leads. If it's personal, set folder=personal. For newsletters/meetings/spam/other, set folder=archived. For notifications, set folder=inbox — notifications (e.g. from GitHub, Jira, CI tools) can be actionable and should stay in the inbox.
+If the email is an invoice, set folder=invoices. If it's a support request, set folder=support. If it's a lead, set folder=leads. If it's personal, set folder=personal. For spam, set folder=spam. For newsletters/meetings/other, set folder=archived. For notifications, set folder=inbox — notifications (e.g. from GitHub, Jira, CI tools) can be actionable and should stay in the inbox.
 
 Example:
 IDX0 newsletter=archived|weekly newsletter
@@ -330,7 +330,7 @@ IDX2 support=support|customer refund request`;
               }
             }
             const f = parts[1]?.trim().toLowerCase();
-            const validFolders = ["inbox", "invoices", "complaints", "leads", "support", "personal", "archived"];
+            const validFolders = ["inbox", "invoices", "complaints", "leads", "support", "personal", "archived", "spam"];
             if (validFolders.includes(f)) {
               fallback.folder = f;
             }
@@ -549,7 +549,7 @@ function classificationToFolder(classification: string): string | null {
     notification: "inbox",
     newsletter: "archived",
     meeting: "archived",
-    spam: "archived",
+    spam: "spam",
     other: "archived",
   };
   return map[classification?.toLowerCase()] ?? null;

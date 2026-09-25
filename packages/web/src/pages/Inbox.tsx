@@ -5,7 +5,7 @@ import type { Missive, Folder } from "@theaiinc/missive-core";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Search as SearchIcon, Sparkles, Archive, FolderOpen, Tag } from "lucide-react";
+import { Search as SearchIcon, Sparkles, Archive, FolderOpen, Tag, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
 import { useEntityConfig, ConfigItem } from "@/hooks/useEntityConfig";
@@ -103,6 +103,7 @@ export function Inbox() {
   const [semanticLoading, setSemanticLoading] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const semanticAbortRef = useRef<AbortController | null>(null);
 
   const cancelDebounce = useCallback(() => {
     if (debounceRef.current) {
@@ -112,6 +113,10 @@ export function Inbox() {
   }, []);
 
   const doSemanticSearch = useCallback(async (query: string) => {
+    // A new question replaces the one still streaming.
+    semanticAbortRef.current?.abort();
+    const abort = new AbortController();
+    semanticAbortRef.current = abort;
     setSemanticLoading(true);
     setSemanticResult("");
     setActiveSearch(""); // clear regular search results
@@ -123,6 +128,7 @@ export function Inbox() {
         body: JSON.stringify({
           message: `Search my communications for: "${query}". Summarize what you find based on the available context in my inbox. Be concise.`,
         }),
+        signal: abort.signal,
       });
       if (!res.ok) {
         setSemanticResult("AI search is unavailable right now.");
@@ -156,9 +162,10 @@ export function Inbox() {
         }
       }
     } catch {
+      if (abort.signal.aborted) return;
       setSemanticResult("Network error.");
     }
-    setSemanticLoading(false);
+    if (semanticAbortRef.current === abort) setSemanticLoading(false);
   }, []);
 
   const doSearch = useCallback(
@@ -178,6 +185,12 @@ export function Inbox() {
     const trimmed = searchQuery.trim();
     if (!trimmed) return;
 
+    // AI search asks the model, so it runs only on Enter, never while typing.
+    if (semantic) {
+      cancelDebounce();
+      return;
+    }
+
     // Long query → don't auto-search (wait for Enter)
     if (trimmed.split(/\s+/).length > SHORT_QUERY_WORDS) {
       cancelDebounce();
@@ -190,7 +203,7 @@ export function Inbox() {
     }, DEBOUNCE_MS);
 
     return () => cancelDebounce();
-  }, [searchQuery, doSearch, cancelDebounce]);
+  }, [searchQuery, semantic, doSearch, cancelDebounce]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -210,6 +223,8 @@ export function Inbox() {
 
   const clearSearch = () => {
     cancelDebounce();
+    semanticAbortRef.current?.abort();
+    setSemanticLoading(false);
     setSearchQuery("");
     setActiveSearch("");
     setSemanticResult("");
@@ -319,6 +334,25 @@ export function Inbox() {
     window.location.reload();
   }, [pushSystemMessage]);
 
+  const doSpam = useCallback(async (missive: Missive, spam: boolean) => {
+    const res = await fetch(`/api/v1/missive/${missive.id}/spam`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spam }),
+    });
+    setContextMenu(null);
+    setMoveToOpen(false);
+    const data = await res.json();
+    if (data.autoMoved > 0) {
+      pushSystemMessage(
+        spam
+          ? `🛡️ Also moved **${data.autoMoved}** other message(s) from **${missive.from.address}** to **Spam**.`
+          : `📥 Also moved **${data.autoMoved}** other message(s) from **${missive.from.address}** back to **Inbox**.`
+      );
+    }
+    window.location.reload();
+  }, [pushSystemMessage]);
+
   const allMissives = data?.pages.flatMap((p) => p.missives) ?? [];
   const total = data?.pages[0]?.total;
 
@@ -373,7 +407,7 @@ export function Inbox() {
               onKeyDown={handleKeyDown}
               placeholder={
                 semantic
-                  ? "Ask AI about your communications..."
+                  ? "Ask AI about your mail, then press Enter"
                   : "Search messages..."
               }
               className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none min-w-0"
@@ -682,6 +716,13 @@ export function Inbox() {
             >
               <Archive className="w-3.5 h-3.5" />
               {folder === "archived" ? "Move to Inbox" : "Archive"}
+            </button>
+            <button
+              onClick={() => doSpam(contextMenu.missive, folder !== "spam")}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-foreground hover:bg-accent text-left"
+            >
+              {folder === "spam" ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+              {folder === "spam" ? "Not spam" : "Mark as spam"}
             </button>
             <div className="relative">
               <button

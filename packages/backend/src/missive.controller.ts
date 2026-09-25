@@ -107,6 +107,11 @@ export class MissiveController {
     return { success: true, ...result };
   }
 
+  @Post("missive/:id/spam")
+  async markSpam(@Param("id") id: string, @Body("spam") spam?: boolean) {
+    return this.missive.markSpam(id, spam !== false);
+  }
+
   @Post("thread/:id/move")
   async moveThread(@Param("id") id: string, @Body("folder") folder: string) {
     if (!folder) return { success: false, error: "folder is required" };

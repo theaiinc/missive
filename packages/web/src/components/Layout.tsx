@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck, CalendarDays, Menu, X } from "lucide-react";
+import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck, ShieldAlert, CalendarDays, Menu, X } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ const folderIcons: Record<string, React.ElementType> = {
   "life-buoy": LifeBuoy,
   user: User,
   send: Send,
+  "shield-alert": ShieldAlert,
 };
 
 const navItems = [
