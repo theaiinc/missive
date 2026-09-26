@@ -10,6 +10,7 @@ const INSTANCE = "api";
 const API_PORT = 4000;
 
 export interface Env extends AiEnv {
+  CF_VERSION_METADATA: WorkerVersionMetadata;
   API: DurableObjectNamespace<MissiveApi>;
   ASSETS: Fetcher;
   EMAIL: SendEmail;
@@ -82,6 +83,26 @@ export class MissiveApi extends Container<Env> {
   // Long enough that someone reading mail doesn't wait for a cold start
   // between clicks; incoming mail wakes it up again.
   sleepAfter = "30m";
+
+  /**
+   * Which deploy started the running container. A deploy updates this
+   * Worker at once, but the container keeps its old image until it stops,
+   * and the cron below keeps it awake, so without this a deploy's API changes
+   * never went live (a database fix shipped but the old queries kept running).
+   */
+  override async onStart(): Promise<void> {
+    await this.ctx.storage.put("startedByVersion", (this.env as Env).CF_VERSION_METADATA.id);
+  }
+
+  /** Stops a container started by an older deploy; the next request starts the new image. */
+  async restartIfStale(currentVersion: string): Promise<boolean> {
+    const startedBy = await this.ctx.storage.get<string>("startedByVersion");
+    if (startedBy === currentVersion) return false;
+    if ((await this.getState()).status !== "healthy" && startedBy !== undefined) return false;
+    await this.ctx.storage.put("startedByVersion", currentVersion);
+    await this.stop();
+    return true;
+  }
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
@@ -179,6 +200,7 @@ export default {
    * until someone opens the app, and new Gmail mail shows up late.
    */
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await api(env).restartIfStale(env.CF_VERSION_METADATA.id);
     await api(env).fetch(new Request(`${env.APP_URL}/api/v1/health`));
   },
 

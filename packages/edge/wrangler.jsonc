@@ -27,6 +27,8 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/auth/*", "/internal/*"]
   },
+  // Lets the cron tell a container started by an older deploy to restart.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "containers": [
     {
       "class_name": "MissiveApi",
