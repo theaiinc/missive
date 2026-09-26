@@ -2,7 +2,7 @@ import { openRow, openRows, seal, sealJson } from "./storage/content-crypto";
 import { llmBaseUrl, llmHeaders, llmModel } from "./llm";
 import { safeError } from "./log-safe";
 import { Injectable, Logger } from "@nestjs/common";
-import { StorageService } from "./storage/storage.service";
+import { MISSIVE_LIST_COLUMNS, StorageService } from "./storage/storage.service";
 import { PostgresService } from "./storage/postgres.service";
 import { SystemEventService } from "./system-event.service";
 
@@ -76,7 +76,7 @@ export class OrganizerService {
       // was switched on where it is, rather than re-filing a whole backlog.
       const since = organizerSince();
       const { rows } = await this.pg.query(
-        `SELECT * FROM missives WHERE channel = 'email'
+        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE channel = 'email'
          AND (
            (classification IS NULL OR classification = '')
            OR (classification = 'other' AND folder = 'inbox')

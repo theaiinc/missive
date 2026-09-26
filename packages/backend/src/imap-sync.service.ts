@@ -152,14 +152,14 @@ export class ImapSyncService {
           const providerMessageId = String(msg.uid);
 
           // Skip if already synced with full bodyHtml
-          const existing = await this.storage.getMissive(providerMessageId);
+          const existing = await this.storage.getMissiveSyncState(providerMessageId);
           // New means never stored. A stored message is fetched again only to
           // repair a body that came in empty; that repair keeps its read state
           // and isn't counted, announced, re-run through rules or re-added to
           // its thread. (Skipping only when bodyHtml was present re-fetched every
           // plain-text email on each sync, reported it as new and reset it to
           // unread.)
-          if (existing && existing.body !== "(no content)") continue;
+          if (existing && !existing.needsBodyRepair) continue;
           const isNew = !existing;
 
           // Parse the raw email

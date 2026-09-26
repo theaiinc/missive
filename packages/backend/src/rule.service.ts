@@ -1,6 +1,7 @@
 import { openRow, openRows, sealJson } from "./storage/content-crypto";
 import { Injectable } from "@nestjs/common";
 import { PostgresService } from "./storage/postgres.service";
+import { MISSIVE_LIST_COLUMNS } from "./storage/storage.service";
 import type {
   Missive,
   Rule,
@@ -154,7 +155,7 @@ export class RuleService {
    */
   async evaluateAll(): Promise<{ applied: number; total: number }> {
     const { rows } = await this.pg.query(
-      "SELECT * FROM missives ORDER BY received_at DESC"
+      `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ORDER BY received_at DESC`
     );
     const missives = (await openRows("missives", rows)).map(rowToSimpleMissive);
     let applied = 0;
@@ -179,7 +180,7 @@ export class RuleService {
    */
   async evaluatePending(limit = 50): Promise<{ applied: number; evaluated: number }> {
     const { rows } = await this.pg.query(
-      `SELECT * FROM missives
+      `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives
        WHERE rules_evaluated_at IS NULL
           OR rules_evaluated_at < updated_at
        ORDER BY rules_evaluated_at NULLS FIRST, received_at DESC
