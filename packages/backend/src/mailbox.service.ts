@@ -89,7 +89,7 @@ export class MailboxService {
     const parsed = await simpleParser(raw);
     const messageId = parsed.messageId ?? `${digest(raw.toString("latin1"))}@missive.local`;
     const id = this.missiveId(mailbox.address, messageId);
-    if (await this.storage.getMissive(id)) return false;
+    if (await this.storage.missiveExists(id)) return false;
 
     const references = Array.isArray(parsed.references) ? parsed.references : parsed.references ? parsed.references.split(/\s+/) : [];
     const root = references[0] ?? parsed.inReplyTo ?? messageId;

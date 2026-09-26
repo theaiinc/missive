@@ -46,6 +46,11 @@ function setup() {
   const threads = new Map<string, any>();
   const storage = {
     getMissive: async (id: string) => missives.get(id),
+    getMissiveSyncState: async (id: string) => {
+      const m = missives.get(id);
+      return m ? { status: m.status, needsBodyRepair: !m.body || m.body === "(no content)" } : null;
+    },
+    missiveExists: async (id: string) => missives.has(id),
     saveMissive: async (m: any) => void missives.set(m.id, structuredClone(m)),
     getThread: async (id: string) => (threads.has(id) ? structuredClone(threads.get(id)) : undefined),
     saveThread: async (t: any) => void threads.set(t.id, structuredClone(t)),

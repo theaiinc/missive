@@ -9,6 +9,23 @@ import type {
   Folder,
 } from '@theaiinc/missive-core';
 
+/**
+ * Every missives column except body_html and headers. body_html is ~90% of a
+ * row (36 KB of ~40 KB on average), and only the detail views render it, so
+ * lists, search, recents and background jobs select these instead of *.
+ * Selecting * everywhere shipped full HTML bodies on every inbox page, search
+ * and sync pass, which is what used up the database's transfer quota.
+ */
+/** The body sync stores when a message came in without one. */
+export const NO_CONTENT_BODY = '(no content)';
+/** Longest a sealed "(no content)" can be; longer bodies are real ones. */
+const PLACEHOLDER_BODY_MAX_BYTES = 512;
+
+export const MISSIVE_LIST_COLUMNS = `id, thread_id, channel, direction, provider, provider_message_id,
+  subject, body, summary, sender_name, sender_address, recipients, cc, bcc, attachments,
+  status, classification, entity_ids, received_at, created_at, updated_at, account_email,
+  folder, rules_evaluated_at, organizations, projects, owner_id`;
+
 @Injectable()
 export class StorageService {
   constructor(private readonly pg: PostgresService) {}
@@ -22,6 +39,39 @@ export class StorageService {
     );
     if (rows.length === 0) return null;
     return rowToMissive(await openRow('missives', rows[0]));
+  }
+
+  /** Existence only — for sync, which checks every listed message each run. */
+  async missiveExists(id: string): Promise<boolean> {
+    const { rows } = await this.pg.query(`SELECT 1 FROM missives WHERE id = $1 LIMIT 1`, [id]);
+    return rows.length > 0;
+  }
+
+  /**
+   * What sync needs about a stored message: whether its body is the
+   * "(no content)" placeholder to repair, and its read status (kept through
+   * the repair). Null when not stored.
+   *
+   * Sync asks this for every listed message on every run (once a minute in
+   * production), so it transfers as little as it can. The body is sealed,
+   * so SQL can't compare it, but a sealed placeholder is always short: only
+   * bodies short enough to be one are fetched and opened. Fetching whole
+   * rows here, HTML bodies included, used up the database's transfer quota.
+   */
+  async getMissiveSyncState(
+    id: string,
+  ): Promise<{ status: Missive['status']; needsBodyRepair: boolean } | null> {
+    const { rows } = await this.pg.query(
+      `SELECT id, status, owner_id,
+              CASE WHEN body IS NULL OR octet_length(body) <= ${PLACEHOLDER_BODY_MAX_BYTES} THEN body END AS body,
+              body IS NULL OR octet_length(body) <= ${PLACEHOLDER_BODY_MAX_BYTES} AS body_is_short
+         FROM missives WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    if (!rows[0].body_is_short) return { status: rows[0].status, needsBodyRepair: false };
+    const row = await openRow('missives', rows[0]);
+    return { status: row.status, needsBodyRepair: !row.body || row.body === NO_CONTENT_BODY };
   }
 
   async saveMissive(missive: Missive): Promise<void> {
@@ -68,7 +118,7 @@ export class StorageService {
 
   async getRecentMissives(since: string, limit = 10): Promise<Missive[]> {
     const { rows } = await this.pg.query(
-      `SELECT * FROM missives WHERE created_at > $1 ORDER BY created_at DESC LIMIT $2`,
+      `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE created_at > $1 ORDER BY created_at DESC LIMIT $2`,
       [since, limit],
     );
     return (await openRows('missives', rows)).map(rowToMissive);
@@ -169,7 +219,7 @@ export class StorageService {
       // Decrypt this user's candidate rows (already narrowed by folder,
       // channel, dates, ...) and match in memory, as ILIKE '%…%' did.
       const dataRes = await this.pg.query(
-        `SELECT * FROM missives ${where} ORDER BY received_at DESC`,
+        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${where} ORDER BY received_at DESC`,
         params,
       );
       const matches = (await openRows('missives', dataRes.rows)).filter((r) =>
@@ -185,7 +235,7 @@ export class StorageService {
       );
       total = parseInt(countRes.rows[0].count, 10);
       const dataRes = await this.pg.query(
-        `SELECT * FROM missives ${where} ORDER BY received_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${where} ORDER BY received_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset],
       );
       missives = (await openRows('missives', dataRes.rows)).map(rowToMissive);

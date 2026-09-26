@@ -58,14 +58,14 @@ export class SyncService {
         let synced = 0;
 
         for (const msg of messages) {
-          const existing = await this.storage.getMissive(msg.id!);
+          const existing = await this.storage.getMissiveSyncState(msg.id!);
           // New means never stored. A stored message is fetched again only to
           // repair a body that came in empty; that repair keeps its read state
           // and isn't counted, announced, re-run through rules or re-added to
           // its thread. (Skipping only when bodyHtml was present re-fetched every
           // plain-text email on each sync, reported it as new and reset it to
           // unread.)
-          if (existing && existing.body !== "(no content)") continue;
+          if (existing && !existing.needsBodyRepair) continue;
           const isNew = !existing;
 
           const detail = await gmail.users.messages.get({
@@ -229,8 +229,7 @@ export class SyncService {
         let synced = 0;
 
         for (const msg of messages) {
-          const existing = await this.storage.getMissive(msg.id);
-          if (existing) continue;
+          if (await this.storage.missiveExists(msg.id)) continue;
 
           const subject = msg.subject ?? "";
           const fromRaw = msg.from?.emailAddress?.address ?? "";
