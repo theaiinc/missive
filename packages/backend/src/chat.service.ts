@@ -253,7 +253,9 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
 
     // Connected accounts
     try {
-      const accounts = await this.connectors.listAll();
+      // Calendar connections stay out of the model's context: nothing obtained
+      // with calendar access is sent to AI (see privacy.html#ai).
+      const accounts = (await this.connectors.listAll()).filter((a) => a.provider !== "gcal");
       if (accounts.length > 0) {
         parts.push(`Connected accounts (${accounts.length}):`);
         for (const acct of accounts) {
