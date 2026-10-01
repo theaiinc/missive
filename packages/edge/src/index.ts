@@ -27,6 +27,12 @@ export interface Env extends AiEnv {
    * of being rejected, so Missive can take a domain's catch-all.
    */
   FORWARD_UNKNOWN?: string;
+  /**
+   * "domain=url,…": domains whose zone is in another Cloudflare account, so
+   * Email Routing and Email Sending for them run in a relay Worker there
+   * (relay/). Sends from these domains go to the relay's /send.
+   */
+  SEND_RELAYS?: string;
   MISSIVE_ORGANIZER?: string;
   /** The organizer only files mail received from this time on (ISO date). */
   ORGANIZER_SINCE?: string;
@@ -42,6 +48,8 @@ export interface Env extends AiEnv {
   ADMIN_TOKEN?: string;
   /** The API proves itself to the Worker with this when it sends mail. */
   EDGE_SECRET: string;
+  /** Optional: this Worker and its relays (SEND_RELAYS) prove themselves to each other with this. */
+  RELAY_SECRET?: string;
   /** Optional: OAuth apps for connecting Gmail / Outlook accounts (Settings). Redirect: APP_URL/oauth. */
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
@@ -177,6 +185,16 @@ type SendRequest = {
 async function send(request: Request, env: Env): Promise<Response> {
   if (!bearerMatches(request, env.EDGE_SECRET)) return json({ error: "Not allowed" }, 401);
   const mail = (await request.json()) as SendRequest;
+  // A domain whose zone is in another Cloudflare account sends through its relay there.
+  const relay = forwardFor(env.SEND_RELAYS, mail.from.email);
+  if (relay) {
+    const response = await fetch(`${relay.replace(/\/+$/, "")}/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${env.RELAY_SECRET}` },
+      body: JSON.stringify(mail),
+    });
+    return new Response(response.body, { status: response.status, headers: { "content-type": "application/json" } });
+  }
   try {
     const result = await env.EMAIL.send({
       from: mail.from.name ? { email: mail.from.email, name: mail.from.name } : mail.from.email,
@@ -207,6 +225,12 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/internal/send" && request.method === "POST") return send(request, env);
+    // Mail a relay Worker received for its domain (relay/); 404 tells it to forward or reject.
+    if (url.pathname === "/internal/inbound" && request.method === "POST") {
+      if (!bearerMatches(request, env.RELAY_SECRET)) return json({ error: "Not allowed" }, 401);
+      const known = await deliver(await request.arrayBuffer(), request.headers.get("x-envelope-to") ?? "", request.headers.get("x-envelope-from") ?? "", env);
+      return known ? json({ stored: true }) : json({ error: "No such mailbox" }, 404);
+    }
     if (url.pathname.startsWith("/internal/ai/")) {
       if (!bearerMatches(request, env.EDGE_SECRET)) return json({ error: "Not allowed" }, 401);
       if (url.pathname === "/internal/ai/v1/chat/completions" && request.method === "POST") return chatCompletions(request, env);
@@ -224,42 +248,49 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  /**
-   * Mail for a hosted mailbox (Email Routing sends it here). It's kept in R2
-   * first, then handed to the API, which files it for the mailbox's owner.
-   */
+  /** Mail for a hosted mailbox (Email Routing sends it here). */
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     const raw = await new Response(message.raw).arrayBuffer();
-    const key = `inbound/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.eml`;
-    // Stored encrypted, bound to its key, with no addresses in the metadata.
-    // Throws (and Email Routing retries later) if the key isn't configured,
-    // rather than ever writing mail in the clear.
-    const sealed = await DataCipher.fromSecret(env.MISSIVE_DATA_KEY).encryptBytes("system:inbound", key, raw);
-    await env.INBOUND.put(key, sealed, {
-      httpMetadata: { contentType: "application/octet-stream" },
-      customMetadata: { encryption: "mv1", scope: "system:inbound" },
-    });
-    const response = await api(env).fetch(
-      new Request(`${env.APP_URL}/api/v1/inbound`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${env.INBOUND_SECRET}`,
-          "content-type": "message/rfc822",
-          "x-envelope-to": message.to,
-          "x-envelope-from": message.from,
-        },
-        body: raw,
-      })
-    );
-    if (response.status === 404) {
-      await env.INBOUND.delete(key);
-      const forwardTo = forwardFor(env.FORWARD_UNKNOWN, message.to);
-      if (forwardTo) await message.forward(forwardTo);
-      else message.setReject("No such mailbox");
-      return;
-    }
-    // Anything else is our problem, not the sender's: the copy stays in R2
-    // (key in the log) and the error makes Email Routing report a failure.
-    if (!response.ok) throw new Error(`API refused inbound mail (${response.status}); kept encrypted as ${key}`);
+    if (await deliver(raw, message.to, message.from, env)) return;
+    const forwardTo = forwardFor(env.FORWARD_UNKNOWN, message.to);
+    if (forwardTo) await message.forward(forwardTo);
+    else message.setReject("No such mailbox");
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * Mail for a hosted mailbox, from Email Routing or a relay (relay/). It's
+ * kept in R2 first, then handed to the API, which files it for the mailbox's
+ * owner. False when the address isn't a Missive mailbox or group.
+ */
+async function deliver(raw: ArrayBuffer, to: string, from: string, env: Env): Promise<boolean> {
+  const key = `inbound/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.eml`;
+  // Stored encrypted, bound to its key, with no addresses in the metadata.
+  // Throws (and Email Routing retries later) if the key isn't configured,
+  // rather than ever writing mail in the clear.
+  const sealed = await DataCipher.fromSecret(env.MISSIVE_DATA_KEY).encryptBytes("system:inbound", key, raw);
+  await env.INBOUND.put(key, sealed, {
+    httpMetadata: { contentType: "application/octet-stream" },
+    customMetadata: { encryption: "mv1", scope: "system:inbound" },
+  });
+  const response = await api(env).fetch(
+    new Request(`${env.APP_URL}/api/v1/inbound`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.INBOUND_SECRET}`,
+        "content-type": "message/rfc822",
+        "x-envelope-to": to,
+        "x-envelope-from": from,
+      },
+      body: raw,
+    })
+  );
+  if (response.status === 404) {
+    await env.INBOUND.delete(key);
+    return false;
+  }
+  // Anything else is our problem, not the sender's: the copy stays in R2
+  // (key in the log) and the error makes Email Routing report a failure.
+  if (!response.ok) throw new Error(`API refused inbound mail (${response.status}); kept encrypted as ${key}`);
+  return true;
+}

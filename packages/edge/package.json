@@ -7,7 +7,8 @@
   "scripts": {
     "types": "wrangler types",
     "typecheck": "wrangler types && tsc --noEmit",
-    "deploy": "pnpm --filter @theaiinc/missive-web exec vite build && wrangler deploy"
+    "deploy": "pnpm --filter @theaiinc/missive-web exec vite build && wrangler deploy",
+    "deploy:relay": "wrangler deploy --config relay/wrangler.jsonc --profile octopus"
   },
   "dependencies": {
     "@cloudflare/containers": "0.3.7"

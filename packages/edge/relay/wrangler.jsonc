@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  // octopusai.live's mail relay (see index.ts), in the Cloudflare account that
+  // holds the octopusai.live zone. Email Routing's catch-all for the domain
+  // sends to this Worker; Missive's SEND_RELAYS points at its /send.
+  // Secret (wrangler secret put): RELAY_SECRET, the same value as Missive's.
+  // Deploy: pnpm --filter @theaiinc/missive-edge run deploy:relay (wrangler profile "octopus").
+  "name": "missive-relay",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-24",
+  "account_id": "7738e086662d74e7dd5cfb2ccb302eab",
+  "workers_dev": false,
+  // Missive's SEND_RELAYS sends here.
+  "routes": [{ "pattern": "mail-relay.octopusai.live", "custom_domain": true }],
+  "observability": { "enabled": true },
+  "send_email": [{ "name": "EMAIL" }],
+  "vars": {
+    "MISSIVE_URL": "https://missive.theaiinc.com",
+    "FORWARD_UNKNOWN": "stevetran.dev@gmail.com"
+  }
+}
