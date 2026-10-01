@@ -8,7 +8,10 @@ import { INVITE_COOKIE, cookie, seal } from "./auth/session";
 import { currentUser } from "./request-context";
 import { AdminAccess } from "./admin.controller";
 
-const INVITE_MINUTES = 30;
+// How long an opened invitation is remembered while the person signs in or
+// signs up (the invitation itself still expires when it does). An evening's
+// back-and-forth over a forgotten password must not lose it.
+const INVITE_REMEMBER_DAYS = 7;
 
 function adminAllowed(header: string | undefined): boolean {
   const secret = process.env.ADMIN_TOKEN;
@@ -68,7 +71,17 @@ export class InviteController {
     if (!address) {
       return page(res, 404, "This invitation isn't valid", "The link is wrong, has expired, or was already used. Ask for a new one.");
     }
-    res.setHeader("set-cookie", cookie(INVITE_COOKIE, seal({ token, exp: Date.now() + INVITE_MINUTES * 60_000 }), INVITE_MINUTES * 60));
-    res.redirect(302, "/auth/login");
+    res.setHeader("set-cookie", cookie(INVITE_COOKIE, seal({ token, exp: Date.now() + INVITE_REMEMBER_DAYS * 86_400_000 }), INVITE_REMEMBER_DAYS * 86_400));
+    // Say what happens next before handing over to Aegis's sign-in page.
+    const safe = address.replace(/[<>&"]/g, "");
+    return page(
+      res,
+      200,
+      `You're invited to ${safe}`,
+      `To get this mailbox, sign in to Missive with an email you already use, such as your Gmail. ` +
+        `If you've never signed in before or don't know your password, choose <b>Email me a sign-in link</b> on the next page: ` +
+        `no password needed. The mailbox is added to your account as soon as you're in.</p>` +
+        `<p><a href="/auth/login" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none">Continue</a>`,
+    );
   }
 }

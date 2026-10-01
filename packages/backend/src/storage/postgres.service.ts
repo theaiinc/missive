@@ -26,7 +26,16 @@ export class PostgresService implements OnModuleInit {
     this.pool = new Pool({
       connectionString:
         process.env.DATABASE_URL ?? "postgresql://missive:missive@localhost:5432/missive",
+      max: 20,
+      // A request fails fast instead of waiting forever for a free connection
+      // (every signed-in request hung once all of them were stuck).
+      connectionTimeoutMillis: 15_000,
+      // No statement or open transaction may hold a connection indefinitely.
+      statement_timeout: 60_000,
+      idle_in_transaction_session_timeout: 60_000,
     });
+    // A dropped connection is replaced on the next checkout; don't crash the process.
+    this.pool.on("error", (e) => console.error(`[db] idle connection error: ${e.message}`));
   }
 
   async onModuleInit() {
