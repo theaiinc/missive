@@ -2,11 +2,14 @@ import { Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive, Thread, EntityReference } from "@theaiinc/missive-core";
 import { StorageService } from "./storage/storage.service";
+import { RuleService } from "./rule.service";
 
 export interface MoveResult {
   moved: number;
   autoMoved: number;
   autoMovedIds: string[];
+  /** A rule made or changed from this choice (see RuleService.learnFiling), for the person to review. */
+  learnedRule?: { id: string; name: string };
 }
 
 @Injectable()
@@ -15,8 +18,17 @@ export class MissiveService {
 
   constructor(
     private readonly storage: StorageService,
-    private readonly eventEmitter: EventEmitter2
+    private readonly eventEmitter: EventEmitter2,
+    private readonly rules: RuleService
   ) {}
+
+  /** Remembers where you filed this sender's mail, as a rule (only for mail you received). */
+  private async learn(missive: Missive | undefined, folder: string, decisive: boolean): Promise<MoveResult["learnedRule"]> {
+    // Archiving is usually "done with this", not "this sender belongs there".
+    if (!missive || missive.direction !== "inbound" || folder === "archived") return undefined;
+    const rule = await this.rules.learnFiling(missive.from.address, folder, decisive);
+    return rule ? { id: rule.id, name: rule.name } : undefined;
+  }
 
   async getMissive(id: string): Promise<Missive | null> {
     return this.storage.getMissive(id);
@@ -71,6 +83,7 @@ export class MissiveService {
       moved: 1,
       autoMoved: autoMovedIds.length,
       autoMovedIds,
+      learnedRule: await this.learn(missive, folder, false),
     };
   }
 
@@ -94,6 +107,7 @@ export class MissiveService {
       moved: missives.length,
       autoMoved: autoMovedIds.length,
       autoMovedIds,
+      learnedRule: await this.learn(missives.find((m) => m.direction === "inbound"), folder, false),
     };
   }
 
@@ -115,7 +129,7 @@ export class MissiveService {
       ? (await this.storage.findMissivesBySender(address, sourceFolder, id)).map((r) => r.id)
       : [];
     await this.storage.setSpam([id, ...others], spam);
-    return { moved: 1, autoMoved: others.length, autoMovedIds: others };
+    return { moved: 1, autoMoved: others.length, autoMovedIds: others, learnedRule: await this.learn(missive, spam ? "spam" : "inbox", true) };
   }
 
   private async autoMoveSimilar(

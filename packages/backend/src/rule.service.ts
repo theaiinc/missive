@@ -113,6 +113,63 @@ export class RuleService {
     await this.resetEvaluations();
   }
 
+  // ── Learned from your filing ──
+
+  /**
+   * Remembers where you file a sender's mail, as a rule you can review (and
+   * edit, switch off or delete) on the Rules page: "Mail from x@y.com →
+   * Spam". Marking spam / not spam is decisive at once; a plain move needs a
+   * second conversation from that sender filed to the same folder. A later
+   * choice for the sender changes the rule; a rule of your own for that
+   * sender is left alone.
+   */
+  async learnFiling(address: string | undefined, folder: string, decisive: boolean): Promise<Rule | null> {
+    const sender = address?.trim().toLowerCase();
+    if (!sender?.includes("@") || !folder) return null;
+    const forSender = (await this.list()).filter((r) =>
+      r.conditions.some((c) => c.field === "from_address" && c.operator === "equals" && c.value.toLowerCase() === sender),
+    );
+    if (forSender.some((r) => !isLearned(r))) return null;
+    const learned = forSender[0];
+    if (learned && moveTarget(learned) === folder) return null;
+    if (!learned && !decisive && (await this.filedThreads(sender, folder)) < 2) return null;
+    const rule = {
+      name: `Mail from ${sender} → ${folderLabel(folder)}`,
+      description: LEARNED,
+      conditions: [{ field: "from_address" as const, operator: "equals" as const, value: sender }],
+      actions: [{ type: "move_to_folder" as const, params: { folder } }],
+      // Below rules you write yourself (higher runs first; the first match wins).
+      priority: -1,
+    };
+    return learned ? this.update(learned.id, rule) : this.create(rule);
+  }
+
+  /** How many of the sender's conversations you have filed into `folder` yourself. */
+  private async filedThreads(sender: string, folder: string): Promise<number> {
+    const { rows } = await this.pg.query(
+      `SELECT thread_id, sender_address FROM missives
+        WHERE filed_by_user_at IS NOT NULL AND folder = $1 AND direction = 'inbound'
+        ORDER BY filed_by_user_at DESC LIMIT 500`,
+      [folder],
+    );
+    const open = await openRows("missives", rows);
+    return new Set(open.filter((r: any) => String(r.sender_address ?? "").trim().toLowerCase() === sender).map((r: any) => r.thread_id)).size;
+  }
+
+  /**
+   * Where your rules would put a message (the first enabled rule that matches,
+   * if it moves or archives), without applying anything. The organizer leaves
+   * such mail where the rule puts it.
+   */
+  async ruledFolder(): Promise<(row: any) => string | null> {
+    const enabled = (await this.list()).filter((r) => r.enabled);
+    return (row) => {
+      const m = rowToSimpleMissive(row);
+      const rule = enabled.find((r) => this.matches(r, m));
+      return rule ? moveTarget(rule) : null;
+    };
+  }
+
   // ── Evaluation ──
 
   /**
@@ -329,6 +386,21 @@ export class RuleService {
     }
   }
 }
+
+/** The description that marks a rule Missive wrote from your own filing (RuleService.learnFiling). */
+export const LEARNED = "Learned from where you filed this sender's mail. Edit or delete it if that's not what you want.";
+const isLearned = (r: Rule) => r.description === LEARNED;
+
+/** The folder a rule moves mail to ("archived" for archive), if it moves it. */
+function moveTarget(rule: Rule): string | null {
+  for (const a of rule.actions) {
+    if (a.type === "archive") return "archived";
+    if (a.type === "move_to_folder" && a.params?.folder) return String(a.params.folder);
+  }
+  return null;
+}
+
+const folderLabel = (slug: string) => slug.charAt(0).toUpperCase() + slug.slice(1);
 
 function rowToRule(row: any): Rule {
   return {

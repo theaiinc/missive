@@ -5,6 +5,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { MISSIVE_LIST_COLUMNS, StorageService } from "./storage/storage.service";
 import { PostgresService } from "./storage/postgres.service";
 import { SystemEventService } from "./system-event.service";
+import { RuleService } from "./rule.service";
 
 /** Messages classified per model call. */
 const BATCH_SIZE = 15;
@@ -54,7 +55,8 @@ export class OrganizerService {
   constructor(
     private readonly storage: StorageService,
     private readonly pg: PostgresService,
-    private readonly events: SystemEventService
+    private readonly events: SystemEventService,
+    private readonly rules: RuleService
   ) {
     this.baseUrl = llmBaseUrl();
     this.model = llmModel();
@@ -77,7 +79,7 @@ export class OrganizerService {
       const since = organizerSince();
       const { rows } = await this.pg.query(
         `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE channel = 'email'
-         AND filed_by_user_at IS NULL
+         AND filed_by_user_at IS NULL AND ruled_at IS NULL
          AND (
            (classification IS NULL OR classification = '')
            OR (classification = 'other' AND folder = 'inbox')
@@ -90,12 +92,17 @@ export class OrganizerService {
       if (rows.length === 0) return 0;
 
       // Batch classify all at once (on decrypted subject/sender/body)
-      const results = await this.batchClassify(await openRows("missives", rows));
+      const open = await openRows("missives", rows);
+      // Mail one of your rules files (including ones learned from your own
+      // filing) is labelled but stays where the rule puts it.
+      const ruled = await this.rules.ruledFolder();
+      const ruledIds = new Set(open.filter((r: any) => ruled(r)).map((r: any) => r.id));
+      const results = await this.batchClassify(open);
       let processed = 0;
 
       for (const result of results) {
         if (result) {
-          await this.applyClassification(result.missiveId, result.threadId, result);
+          await this.applyClassification(result.missiveId, result.threadId, result, !ruledIds.has(result.missiveId));
           // Clear rules evaluator so rules based on classification re-trigger
           await this.pg.query(
             "UPDATE missives SET rules_evaluated_at = NULL WHERE id = $1",
@@ -107,13 +114,17 @@ export class OrganizerService {
 
       // Also fix orphaned missives that were classified but never moved to the right folder
       const { rows: orphaned } = await this.pg.query(
-        `SELECT id, thread_id, classification FROM missives
-         WHERE classification IS NOT NULL AND classification != '' AND folder = 'inbox' AND filed_by_user_at IS NULL
+        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives
+         WHERE classification IS NOT NULL AND classification != '' AND folder = 'inbox' AND filed_by_user_at IS NULL AND ruled_at IS NULL
          AND classification IN ('invoice', 'complaint', 'lead', 'support', 'personal', 'newsletter', 'meeting', 'spam', 'other')
          LIMIT $1`,
         [limit]
       );
-      for (const row of orphaned) {
+      for (const row of await openRows("missives", orphaned)) {
+        if (ruled(row)) {
+          await this.pg.query("UPDATE missives SET ruled_at = NOW() WHERE id = $1", [row.id]);
+          continue;
+        }
         const targetFolder = classificationToFolder(row.classification);
         if (targetFolder && targetFolder !== "inbox") {
           await this.pg.query(
@@ -382,7 +393,8 @@ IDX2 support=support|customer refund request`;
   private async applyClassification(
     missiveId: string,
     threadId: string,
-    result: ClassifyResult
+    result: ClassifyResult,
+    move = true
   ): Promise<void> {
     // Set classification
     await this.pg.query(
@@ -395,7 +407,9 @@ IDX2 support=support|customer refund request`;
 
     // Move to folder: prefer the mapped folder from classification, fall back to AI's suggestion
     const targetFolder = result.folder ?? classificationFolder;
-    if (targetFolder && targetFolder !== "inbox") {
+    if (!move) {
+      await this.pg.query("UPDATE missives SET ruled_at = NOW() WHERE id = $1", [missiveId]);
+    } else if (targetFolder && targetFolder !== "inbox") {
       await this.pg.query(
         "UPDATE missives SET folder = $1, updated_at = NOW() WHERE id = $2",
         [targetFolder, missiveId]

@@ -324,6 +324,7 @@ export function Inbox() {
       const domain = missive.from.address.split("@")[1];
       pushSystemMessage(`📁 Moved **${data.autoMoved}** other message(s) from **${domain}** to **archived** based on your action.`);
     }
+    if (data.learnedRule) pushSystemMessage(`📏 Made a rule from your choice: **${data.learnedRule.name}**. Review it in **Rules**.`);
     window.location.reload();
   }, [pushSystemMessage]);
 
@@ -339,6 +340,7 @@ export function Inbox() {
       const domain = missive.from.address.split("@")[1];
       pushSystemMessage(`📁 Moved **${data.autoMoved}** other message(s) from **${domain}** back to **inbox** based on your action.`);
     }
+    if (data.learnedRule) pushSystemMessage(`📏 Made a rule from your choice: **${data.learnedRule.name}**. Review it in **Rules**.`);
     window.location.reload();
   }, [pushSystemMessage]);
 
@@ -355,6 +357,7 @@ export function Inbox() {
       const domain = missive.from.address.split("@")[1];
       pushSystemMessage(`📁 Moved **${data.autoMoved}** other message(s) from **${domain}** to **${folderSlug}** based on your action.`);
     }
+    if (data.learnedRule) pushSystemMessage(`📏 Made a rule from your choice: **${data.learnedRule.name}**. Review it in **Rules**.`);
     window.location.reload();
   }, [pushSystemMessage]);
 
@@ -374,6 +377,7 @@ export function Inbox() {
           : `📥 Also moved **${data.autoMoved}** other message(s) from **${missive.from.address}** back to **Inbox**.`
       );
     }
+    if (data.learnedRule) pushSystemMessage(`📏 Made a rule from your choice: **${data.learnedRule.name}**. Review it in **Rules**.`);
     window.location.reload();
   }, [pushSystemMessage]);
 
