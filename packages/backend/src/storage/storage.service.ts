@@ -282,7 +282,7 @@ export class StorageService {
 
   async moveMissive(id: string, folder: string): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET folder = $1, updated_at = NOW() WHERE id = $2',
+      'UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $2',
       [folder, id],
     );
   }
@@ -291,12 +291,12 @@ export class StorageService {
     const folder = classificationToFolder(classification);
     if (folder) {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, folder = $2, updated_at = NOW() WHERE id = $3',
+        'UPDATE missives SET classification = $1, folder = $2, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $3',
         [classification, folder, id],
       );
     } else {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, updated_at = NOW() WHERE id = $2',
+        'UPDATE missives SET classification = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $2',
         [classification, id],
       );
     }
@@ -306,12 +306,12 @@ export class StorageService {
     const folder = classificationToFolder(classification);
     if (folder) {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, folder = $2, updated_at = NOW() WHERE thread_id = $3',
+        'UPDATE missives SET classification = $1, folder = $2, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $3',
         [classification, folder, threadId],
       );
     } else {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, updated_at = NOW() WHERE thread_id = $2',
+        'UPDATE missives SET classification = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $2',
         [classification, threadId],
       );
     }
@@ -319,7 +319,7 @@ export class StorageService {
 
   async moveThread(threadId: string, folder: string): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2',
+      'UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $2',
       [folder, threadId],
     );
   }
@@ -366,8 +366,8 @@ export class StorageService {
     if (!ids.length) return;
     await this.pg.query(
       spam
-        ? `UPDATE missives SET folder = 'spam', classification = 'spam', updated_at = NOW() WHERE id = ANY($1::text[])`
-        : `UPDATE missives SET folder = 'inbox', classification = CASE WHEN classification = 'spam' THEN 'other' ELSE classification END, updated_at = NOW() WHERE id = ANY($1::text[])`,
+        ? `UPDATE missives SET folder = 'spam', classification = 'spam', filed_by_user_at = NOW(), updated_at = NOW() WHERE id = ANY($1::text[])`
+        : `UPDATE missives SET folder = 'inbox', classification = CASE WHEN classification = 'spam' THEN 'other' ELSE classification END, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = ANY($1::text[])`,
       [ids],
     );
   }
@@ -375,7 +375,7 @@ export class StorageService {
   /** Move multiple missives to a folder in one query. */
   async batchMoveMissives(ids: string[], folder: string): Promise<void> {
     await this.pg.query(
-      `UPDATE missives SET folder = $1, updated_at = NOW() WHERE id = ANY($2::text[])`,
+      `UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = ANY($2::text[])`,
       [folder, ids],
     );
   }

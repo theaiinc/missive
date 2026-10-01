@@ -77,6 +77,7 @@ export class OrganizerService {
       const since = organizerSince();
       const { rows } = await this.pg.query(
         `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE channel = 'email'
+         AND filed_by_user_at IS NULL
          AND (
            (classification IS NULL OR classification = '')
            OR (classification = 'other' AND folder = 'inbox')
@@ -107,7 +108,7 @@ export class OrganizerService {
       // Also fix orphaned missives that were classified but never moved to the right folder
       const { rows: orphaned } = await this.pg.query(
         `SELECT id, thread_id, classification FROM missives
-         WHERE classification IS NOT NULL AND classification != '' AND folder = 'inbox'
+         WHERE classification IS NOT NULL AND classification != '' AND folder = 'inbox' AND filed_by_user_at IS NULL
          AND classification IN ('invoice', 'complaint', 'lead', 'support', 'personal', 'newsletter', 'meeting', 'spam', 'other')
          LIMIT $1`,
         [limit]
@@ -120,7 +121,7 @@ export class OrganizerService {
             [targetFolder, row.id]
           );
           await this.pg.query(
-            "UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2 AND folder = 'inbox'",
+            "UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2 AND folder = 'inbox' AND filed_by_user_at IS NULL",
             [targetFolder, row.thread_id]
           );
         }
@@ -132,7 +133,7 @@ export class OrganizerService {
       // Fix previously mis-archived notifications — bring them back to inbox
       const { rows: misarchived } = await this.pg.query(
         `UPDATE missives SET folder = 'inbox', updated_at = NOW()
-         WHERE folder = 'archived' AND classification = 'notification'
+         WHERE folder = 'archived' AND classification = 'notification' AND filed_by_user_at IS NULL
          RETURNING id`
       );
       if (misarchived.length > 0) {
@@ -400,7 +401,7 @@ IDX2 support=support|customer refund request`;
         [targetFolder, missiveId]
       );
       await this.pg.query(
-        "UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2 AND folder = 'inbox'",
+        "UPDATE missives SET folder = $1, updated_at = NOW() WHERE thread_id = $2 AND folder = 'inbox' AND filed_by_user_at IS NULL",
         [targetFolder, threadId]
       );
     }
