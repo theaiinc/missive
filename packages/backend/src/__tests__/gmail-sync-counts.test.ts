@@ -57,7 +57,8 @@ function setup() {
   };
   const store = {
     list: async () => [{ id: "gmail:me@example.com", email: "me@example.com", tokens: {} }],
-    getOAuthClientForConnector: () => ({}),
+    createOAuth2Client: () => ({ setCredentials: () => {} }),
+    getValidGmailToken: async () => "access",
     updateLastSyncAt: async () => {},
   };
   const rules = { evaluate: vi.fn(async () => []), applyActions: vi.fn() };

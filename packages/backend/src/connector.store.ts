@@ -13,6 +13,24 @@ export interface StoredConnector {
   tokens: Record<string, any>;
   connectedAt: string;
   lastSyncAt?: string | null;
+  /** 'active', or 'needs_reauth' once the provider has refused the stored refresh token. */
+  status?: string;
+  lastError?: string | null;
+}
+
+/** The provider refused the stored refresh token; the person has to reconnect the account. */
+export class ReauthRequiredError extends Error {
+  constructor(readonly connectorId: string, message = "Reconnect this account — the provider no longer accepts the saved sign-in") {
+    super(message);
+    this.name = "ReauthRequiredError";
+  }
+}
+
+/** A token-endpoint refusal that no retry will fix: invalid_grant, or HTTP 400/401. */
+export function isRefreshRejected(err: unknown): boolean {
+  const e = err as { status?: unknown; code?: unknown; message?: unknown; response?: { status?: unknown } } | null;
+  const status = Number(e?.status ?? e?.response?.status ?? e?.code);
+  return status === 400 || status === 401 || /invalid_grant/i.test(String(e?.message ?? ""));
 }
 
 /**
@@ -41,6 +59,41 @@ export const GCAL_SCOPES = [
 @Injectable()
 export class ConnectorStore {
   constructor(private readonly pg: PostgresService) {}
+
+  /**
+   * Refreshes in flight, per connector. A refresh token can be single-use
+   * (Microsoft rotates it), so two overlapping refreshes would make the second
+   * reuse a token the first already spent. Callers share one result instead.
+   */
+  private readonly refreshing = new Map<string, Promise<string>>();
+
+  private dedupeRefresh(connectorId: string, run: () => Promise<string>): Promise<string> {
+    const running = this.refreshing.get(connectorId);
+    if (running) return running;
+    const next = run().finally(() => this.refreshing.delete(connectorId));
+    this.refreshing.set(connectorId, next);
+    return next;
+  }
+
+  /** Stops syncing this connector until the person reconnects it (save() clears the flag). */
+  async markNeedsReauth(id: string, reason: string): Promise<void> {
+    await this.pg.query(
+      "UPDATE connectors SET status = 'needs_reauth', last_error = $2, updated_at = NOW() WHERE id = $1",
+      [id, reason.slice(0, 300)]
+    );
+  }
+
+  /** Runs a token refresh; a refusal from the token endpoint flags the connector instead of being retried. */
+  private async refreshOrFlag<T>(connectorId: string, refresh: () => Promise<T>): Promise<T> {
+    try {
+      return await refresh();
+    } catch (err) {
+      if (!isRefreshRejected(err)) throw err;
+      const error = new ReauthRequiredError(connectorId);
+      await this.markNeedsReauth(connectorId, error.message);
+      throw error;
+    }
+  }
 
   // ── Gmail OAuth ──
 
@@ -113,43 +166,47 @@ export class ConnectorStore {
    * Updates stored tokens when refreshed.
    */
   async getValidGmailToken(connectorId: string): Promise<string> {
-    const connector = await this.get(connectorId);
-    if (!connector || connector.provider !== "gmail") {
-      throw new Error(`Invalid or missing Gmail connector: ${connectorId}`);
-    }
+    return this.dedupeRefresh(connectorId, async () => {
+      const connector = await this.get(connectorId);
+      if (!connector || connector.provider !== "gmail") {
+        throw new Error(`Invalid or missing Gmail connector: ${connectorId}`);
+      }
+      if (connector.status === "needs_reauth") throw new ReauthRequiredError(connectorId);
 
-    const tokens = connector.tokens;
-    const expiry = tokens.expiry_date ? Number(tokens.expiry_date) : 0;
+      const tokens = connector.tokens;
+      const expiry = tokens.expiry_date ? Number(tokens.expiry_date) : 0;
 
-    // If still valid, return current access token
-    if (tokens.access_token && expiry > Date.now() + 60000) {
-      return tokens.access_token;
-    }
+      // If still valid, return current access token
+      if (tokens.access_token && expiry > Date.now() + 60000) {
+        return tokens.access_token;
+      }
 
-    // Need to refresh
-    if (!tokens.refresh_token) {
-      throw new Error("No refresh token available — re-authenticate with Gmail");
-    }
+      // Need to refresh
+      if (!tokens.refresh_token) {
+        await this.markNeedsReauth(connectorId, "No refresh token saved");
+        throw new ReauthRequiredError(connectorId);
+      }
 
-    const oauth2 = this.createOAuth2Client();
-    oauth2.setCredentials({ refresh_token: tokens.refresh_token });
-    const { credentials } = await oauth2.refreshAccessToken();
+      const oauth2 = this.createOAuth2Client();
+      oauth2.setCredentials({ refresh_token: tokens.refresh_token });
+      const { credentials } = await this.refreshOrFlag(connectorId, () => oauth2.refreshAccessToken());
 
-    // Save updated tokens
-    const freshTokens = {
-      access_token: credentials.access_token!,
-      refresh_token: credentials.refresh_token ?? tokens.refresh_token,
-      expiry_date: credentials.expiry_date ?? undefined,
-    };
-    await this.save("gmail", {
-      provider: "gmail",
-      label: connector.label,
-      email: connector.email,
-      tokens: freshTokens,
-      connectedAt: connector.connectedAt,
+      // Save updated tokens
+      const freshTokens = {
+        access_token: credentials.access_token!,
+        refresh_token: credentials.refresh_token ?? tokens.refresh_token,
+        expiry_date: credentials.expiry_date ?? undefined,
+      };
+      await this.save("gmail", {
+        provider: "gmail",
+        label: connector.label,
+        email: connector.email,
+        tokens: freshTokens,
+        connectedAt: connector.connectedAt,
+      });
+
+      return freshTokens.access_token;
     });
-
-    return freshTokens.access_token;
   }
 
   // ── Outlook / Microsoft OAuth ──
@@ -240,7 +297,7 @@ export class ConnectorStore {
     );
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Outlook token refresh failed: ${res.status} ${text}`);
+      throw Object.assign(new Error(`Outlook token refresh failed: ${res.status} ${text}`), { status: res.status });
     }
     const data = (await res.json()) as Record<string, any>;
     return {
@@ -257,36 +314,41 @@ export class ConnectorStore {
    * Updates stored tokens when refreshed.
    */
   async getValidOutlookToken(connectorId: string): Promise<string> {
-    const connector = await this.get(connectorId);
-    if (!connector || connector.provider !== "outlook") {
-      throw new Error(`Invalid or missing Outlook connector: ${connectorId}`);
-    }
+    return this.dedupeRefresh(connectorId, async () => {
+      const connector = await this.get(connectorId);
+      if (!connector || connector.provider !== "outlook") {
+        throw new Error(`Invalid or missing Outlook connector: ${connectorId}`);
+      }
+      if (connector.status === "needs_reauth") throw new ReauthRequiredError(connectorId);
 
-    const tokens = connector.tokens;
-    const expiry = tokens.expiry_date ? Number(tokens.expiry_date) : 0;
+      const tokens = connector.tokens;
+      const expiry = tokens.expiry_date ? Number(tokens.expiry_date) : 0;
 
-    // If still valid, return current access token
-    if (tokens.access_token && expiry > Date.now() + 60000) {
-      return tokens.access_token;
-    }
+      // If still valid, return current access token
+      if (tokens.access_token && expiry > Date.now() + 60000) {
+        return tokens.access_token;
+      }
 
-    // Need to refresh
-    if (!tokens.refresh_token) {
-      throw new Error("No refresh token available — re-authenticate with Outlook");
-    }
+      // Need to refresh
+      if (!tokens.refresh_token) {
+        await this.markNeedsReauth(connectorId, "No refresh token saved");
+        throw new ReauthRequiredError(connectorId);
+      }
 
-    const fresh = await this.refreshOutlookTokens(tokens.refresh_token);
+      const fresh = await this.refreshOrFlag(connectorId, () => this.refreshOutlookTokens(tokens.refresh_token));
 
-    // Save updated tokens
-    await this.save("outlook", {
-      provider: "outlook",
-      label: connector.label,
-      email: connector.email,
-      tokens: fresh,
-      connectedAt: connector.connectedAt,
+      // Save updated tokens. Microsoft rotates the refresh token, so the new one
+      // must be kept (the old one stops working); keep the old only if none came back.
+      await this.save("outlook", {
+        provider: "outlook",
+        label: connector.label,
+        email: connector.email,
+        tokens: { ...fresh, refresh_token: fresh.refresh_token ?? tokens.refresh_token },
+        connectedAt: connector.connectedAt,
+      });
+
+      return fresh.access_token;
     });
-
-    return fresh.access_token;
   }
 
   // ── Generic connector CRUD ──
@@ -302,6 +364,8 @@ export class ConnectorStore {
        ON CONFLICT (id) DO UPDATE SET
          label = EXCLUDED.label,
          credentials = EXCLUDED.credentials,
+         status = 'active',
+         last_error = NULL,
          updated_at = NOW()
        RETURNING *`,
       // OAuth tokens and IMAP passwords are stored encrypted for their owner;
@@ -392,5 +456,7 @@ async function rowToConnector(row: any): Promise<StoredConnector> {
     lastSyncAt: row.last_sync_at
       ? (row.last_sync_at.toISOString?.() ?? row.last_sync_at)
       : null,
+    status: row.status ?? "active",
+    lastError: row.last_error ?? null,
   };
 }
