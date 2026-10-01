@@ -24,7 +24,11 @@ async function registration(): Promise<ServiceWorkerRegistration> {
   return (await navigator.serviceWorker.getRegistration("/")) ?? navigator.serviceWorker.register("/sw.js", { scope: "/" });
 }
 
+/** The quiet subscribe on load (refreshPush), which pushState waits for so it doesn't report "off" meanwhile. */
+let refreshing: Promise<boolean> = Promise.resolve(false);
+
 export async function pushState(): Promise<PushState> {
+  await refreshing;
   if (!("serviceWorker" in navigator) || !("Notification" in window)) return isIos() && !standalone() ? "needs-install" : "unsupported";
   if (!("PushManager" in window)) return isIos() && !standalone() ? "needs-install" : "unsupported";
   if (Notification.permission === "denied") return "denied";
@@ -71,11 +75,14 @@ export async function disablePush(): Promise<PushState> {
  * quietly, so the server always has a current subscription for it. True
  * when push is on (the page then leaves system notifications to it).
  */
-export async function refreshPush(): Promise<boolean> {
-  try {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || Notification.permission !== "granted") return false;
-    return (await enablePush()) === "on";
-  } catch {
-    return false;
-  }
+export function refreshPush(): Promise<boolean> {
+  refreshing = (async () => {
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || Notification.permission !== "granted") return false;
+      return (await enablePush()) === "on";
+    } catch {
+      return false;
+    }
+  })();
+  return refreshing;
 }
