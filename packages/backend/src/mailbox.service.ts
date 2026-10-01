@@ -2,13 +2,15 @@ import { addressIndex } from "./identity-crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { createHash } from "node:crypto";
-import { simpleParser, type AddressObject } from "mailparser";
+import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import type { Missive, Thread } from "@theaiinc/missive-core";
 import { StorageService } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { UsersService, type Mailbox } from "./users.service";
 import { GroupsService } from "./groups.service";
 import { requireUser } from "./request-context";
+import { CalendarService } from "./calendar/calendar.service";
+import { safeError } from "./log-safe";
 
 /**
  * Mailboxes Missive hosts itself (address@custom-domain), like Gmail does.
@@ -48,8 +50,22 @@ export class MailboxService {
     private readonly rules: RuleService,
     private readonly users: UsersService,
     private readonly events: EventEmitter2,
-    private readonly groups: GroupsService
+    private readonly groups: GroupsService,
+    private readonly calendar: CalendarService
   ) {}
+
+  /** A meeting invitation in the mail also goes onto the recipient's calendar. */
+  private async addInvite(parsed: ParsedMail) {
+    const part =
+      parsed.attachments.find((a) => /^text\/calendar$/i.test(a.contentType)) ??
+      parsed.attachments.find((a) => /^application\/ics$/i.test(a.contentType) || /\.ics$/i.test(a.filename ?? ""));
+    if (!part) return;
+    try {
+      await this.calendar.applyInvite(part.content.toString("utf8"));
+    } catch (e) {
+      this.logger.warn(`Couldn't add an invitation to the calendar: ${safeError(e)}`);
+    }
+  }
 
   /** Ids are derived from the owner and Message-ID, so a redelivered message is stored once. */
   private missiveId(mailbox: string, messageId: string) {
@@ -120,6 +136,7 @@ export class MailboxService {
 
     const actions = await this.rules.evaluate(missive);
     if (actions.length) await this.rules.applyActions(missive.id, actions);
+    await this.addInvite(parsed);
     this.events.emit("missive.received", { type: "missive.received", timestamp: now, payload: missive });
     this.logger.log("Received mail for a hosted mailbox");
     return true;

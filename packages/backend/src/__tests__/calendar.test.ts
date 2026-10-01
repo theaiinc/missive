@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { expand, instantToWall, parseIcs, span, toIcs, wallToInstant, type StoredEvent } from "../calendar/ical";
 import { fromGoogle, fromOutlook } from "../calendar/providers";
-import { feedUrl, isPrivateAddress } from "../calendar/calendar.service";
+import { feedUrl, inviteMethod, isPrivateAddress } from "../calendar/calendar.service";
 
 const ics = (body: string) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:test\r\nX-WR-CALNAME:Team\r\n${body}END:VCALENDAR\r\n`;
 const stored = (events: ReturnType<typeof parseIcs>["events"]): StoredEvent[] => events.map((e, i) => ({ ...e, id: `e${i}`, calendarId: "c1" }));
@@ -12,6 +12,22 @@ describe("time zones", () => {
     expect(new Date(wallToInstant("2026-07-15T09:00:00", "America/New_York")).toISOString()).toBe("2026-07-15T13:00:00.000Z");
     expect(new Date(wallToInstant("2026-07-15T09:00:00", "Asia/Ho_Chi_Minh")).toISOString()).toBe("2026-07-15T02:00:00.000Z");
     expect(instantToWall(Date.parse("2026-07-15T13:00:00Z"), "America/New_York")).toBe("2026-07-15T09:00:00");
+  });
+});
+
+describe("invitations by mail", () => {
+  it("reads the METHOD, defaulting to PUBLISH", () => {
+    expect(inviteMethod("BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n")).toBe("REQUEST");
+    expect(inviteMethod("BEGIN:VCALENDAR\r\nmethod:cancel\r\nEND:VCALENDAR\r\n")).toBe("CANCEL");
+    expect(inviteMethod(ics(""))).toBe("PUBLISH");
+  });
+
+  it("takes Google's Meet link as the event link", () => {
+    const { events } = parseIcs(ics(
+      "BEGIN:VEVENT\r\nUID:g@google.com\r\nDTSTART:20261005T070000Z\r\nDTEND:20261005T073000Z\r\nRRULE:FREQ=WEEKLY\r\n" +
+      "X-GOOGLE-CONFERENCE:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\n",
+    ));
+    expect(events[0]).toMatchObject({ url: "https://meet.google.com/abc-defg-hij", rrule: "FREQ=WEEKLY" });
   });
 });
 

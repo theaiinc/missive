@@ -208,7 +208,8 @@ export function parseIcs(ics: string): { name: string | null; events: ParsedEven
         location: text(ve.getFirstPropertyValue("location")),
         organizer: org ? mailto(org.getFirstValue()) : null,
         attendees,
-        url: text(ve.getFirstPropertyValue("url")),
+        // Google puts the Meet link in its own property rather than URL.
+        url: text(ve.getFirstPropertyValue("url")) ?? text(ve.getFirstPropertyValue("x-google-conference")),
         startWall,
         endWall,
         tzid: allDay ? null : tz,

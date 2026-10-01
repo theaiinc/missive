@@ -75,6 +75,11 @@ async function fetchFeed(raw: string): Promise<string> {
   throw new BadRequestException("Too many redirects");
 }
 
+/** The iCalendar METHOD of an invitation (REQUEST, CANCEL, REPLY...); a file without one is a plain PUBLISH. */
+export function inviteMethod(ics: string): string {
+  return /^METHOD:\s*([\w-]+)/im.exec(ics)?.[1]?.toUpperCase() ?? "PUBLISH";
+}
+
 function parse(text: string) {
   try {
     return parseIcs(text);
@@ -235,6 +240,38 @@ export class CalendarService {
       await this.syncAccount(calendar.connectorId);
     }
     return this.get(id);
+  }
+
+  // ── Invitations by mail ──
+
+  /**
+   * A meeting invitation that arrived by mail (straight to you or through a
+   * group) goes onto your calendar: into the calendar of yours already holding
+   * it, else "Invitations" (made on first use). Updates and cancellations
+   * replace it; copies older than the one held (lower SEQUENCE) are ignored.
+   */
+  async applyInvite(ics: string): Promise<number> {
+    const method = inviteMethod(ics);
+    // REPLY, COUNTER and the like answer invitations rather than make them.
+    if (method !== "REQUEST" && method !== "PUBLISH" && method !== "CANCEL") return 0;
+    const events = parseIcs(ics).events.map((e) => (method === "CANCEL" ? { ...e, status: "cancelled" } : e));
+    if (!events.length) return 0;
+    const held = await this.stored(
+      `JOIN calendars c ON c.owner_id = e.owner_id AND c.id = e.calendar_id WHERE c.source = 'local' AND e.uid = ANY($1::text[])`,
+      [[...new Set(events.map((e) => e.uid.slice(0, 1000)))]],
+    );
+    const fresh = events.filter((e) => {
+      const mine = held.find((h) => h.uid === e.uid.slice(0, 1000) && h.recurrenceId === e.recurrenceId);
+      return !mine || e.sequence >= mine.sequence;
+    });
+    if (!fresh.length || (method === "CANCEL" && !held.length)) return 0;
+    const calendarId = held[0]?.calendarId ?? (await this.invitations()).id;
+    return this.write(calendarId, fresh, false);
+  }
+
+  private async invitations(): Promise<Calendar> {
+    const existing = (await this.list()).find((c) => c.source === "local" && c.name === "Invitations");
+    return existing ?? this.create({ name: "Invitations" });
   }
 
   // ── Connected accounts ──
