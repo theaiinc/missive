@@ -59,6 +59,9 @@ export interface Env extends AiEnv {
   /** Optional: the Google Calendar OAuth app (read-only calendars), separate from Gmail's. Redirect: APP_URL/oauth. */
   GCAL_CLIENT_ID?: string;
   GCAL_CLIENT_SECRET?: string;
+  /** Optional: Web Push for new mail (backend push.service.ts). The public key is a var, the private one a secret. */
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
   /** Secrets for the MISSIVE_SITES clients: AEGIS_CLIENT_SECRET_<CLIENT_ID>. */
   [secret: `AEGIS_CLIENT_SECRET_${string}`]: string | undefined;
 }
@@ -149,6 +152,8 @@ export class MissiveApi extends Container<Env> {
       OUTLOOK_TENANT: env.OUTLOOK_TENANT ?? "",
       GCAL_CLIENT_ID: env.GCAL_CLIENT_ID ?? "",
       GCAL_CLIENT_SECRET: env.GCAL_CLIENT_SECRET ?? "",
+      VAPID_PUBLIC_KEY: env.VAPID_PUBLIC_KEY ?? "",
+      VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY ?? "",
     };
   }
 }

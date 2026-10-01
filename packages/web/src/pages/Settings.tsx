@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useEffect, useState } from "react";
-import { RefreshCw, Trash2, Plus, Loader2, KeyRound, AlertCircle } from "lucide-react";
+import { RefreshCw, Trash2, Plus, Loader2, KeyRound, AlertCircle, Bell } from "lucide-react";
+import { disablePush, enablePush, pushState, type PushState } from "@/lib/push";
 import { useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors, colorOptions } from "@/hooks/useAccountColors";
@@ -1117,6 +1118,10 @@ export function Settings() {
 
         <Separator />
 
+        <PushNotifications />
+
+        <Separator />
+
         {/* Ecosystem Integration */}
         <section>
           <div className="flex items-center gap-2 mb-4">
@@ -1160,6 +1165,54 @@ export function Settings() {
         </section>
       </div>
     </div>
+  );
+}
+
+const PUSH_TEXT: Record<PushState, string> = {
+  on: "On for this browser. New mail in your inbox shows up even with Missive closed.",
+  off: "Get a notification for new mail in your inbox, even with Missive closed.",
+  denied: "This browser blocks notifications from Missive. Allow them in the browser's site settings, then come back.",
+  "needs-install": "On iPhone and iPad, add Missive to your Home Screen first (Share → Add to Home Screen), then open it from there and turn this on.",
+  unsupported: "This browser can't receive push notifications.",
+  unavailable: "Push notifications aren't set up on this server yet.",
+};
+
+/** Push notifications for new mail, per browser (lib/push.ts). */
+function PushNotifications() {
+  const [state, setState] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    pushState().then(setState).catch(() => setState("unsupported"));
+  }, []);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const next = state === "on" ? await disablePush() : await enablePush();
+      setState(next);
+      if (next === "on") toast.success("Push notifications are on for this browser");
+    } catch (e) {
+      toast.error(`Couldn't change notifications: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section>
+      <h3 className="text-sm font-medium text-foreground mb-4">Notifications</h3>
+      <Card className="p-4 flex items-start gap-3">
+        <Bell className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-foreground">Push notifications</p>
+          <p className="text-xs text-muted-foreground mt-1">{state ? PUSH_TEXT[state] : "Checking…"}</p>
+        </div>
+        {(state === "on" || state === "off") && (
+          <Button size="sm" variant={state === "on" ? "outline" : "default"} disabled={busy} onClick={toggle}>
+            {busy && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+            {state === "on" ? "Turn off" : "Turn on"}
+          </Button>
+        )}
+      </Card>
+    </section>
   );
 }
 

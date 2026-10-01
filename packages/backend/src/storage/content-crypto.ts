@@ -22,6 +22,7 @@ export const ENCRYPTED_COLUMNS = {
   rules: ["conditions"],
   calendars: ["name", "source_url", "external_id"],
   calendar_events: ["summary", "description", "location", "organizer", "attendees", "url"],
+  push_subscriptions: ["subscription"],
 } as const;
 
 export type EncryptedTable = keyof typeof ENCRYPTED_COLUMNS;

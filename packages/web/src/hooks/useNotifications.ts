@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { toast } from "sonner";
+import { refreshPush } from "@/lib/push";
 
 export interface RecentMissive {
   id: string;
@@ -56,10 +57,14 @@ export function useNotifications() {
   const [digest, setDigest] = useState<DigestInfo | null>(null);
   const [digestLoaded, setDigestLoaded] = useState(false);
 
-  // Request browser notification permission once
+  // With push on (lib/push.ts), the service worker shows system
+  // notifications, even with Missive closed; the page only shows toasts.
+  const pushOnRef = useRef(false);
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+      Notification.requestPermission().then(() => refreshPush()).then((on) => { pushOnRef.current = on; });
+    } else {
+      refreshPush().then((on) => { pushOnRef.current = on; });
     }
   }, []);
 
@@ -138,7 +143,7 @@ export function useNotifications() {
         });
 
         // Browser notification
-        if ("Notification" in window && Notification.permission === "granted") {
+        if (!pushOnRef.current && "Notification" in window && Notification.permission === "granted") {
           new Notification(`Missive: ${sender}`, {
             body: subject,
             icon: "/missive.svg",
