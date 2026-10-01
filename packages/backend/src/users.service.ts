@@ -43,6 +43,9 @@ export class UsersService {
    */
   async signIn(sub: string, email: string, name?: string): Promise<RequestUser> {
     const lower = normalizeAddress(email);
+    // An address an admin linked to an existing account (see linkLogin) opens that account.
+    const linked = await this.signInLinked(sub, lower);
+    if (linked) return linked;
     // Matched on the email's blind index; email and name are stored encrypted.
     const { rows } = await this.pg.systemQuery(
       `INSERT INTO users (email, email_bidx, aegis_sub, name, last_login_at) VALUES ($1, $2, $3, $4, NOW())
@@ -58,6 +61,54 @@ export class UsersService {
     if (user.aegis_sub !== sub) throw new Error("This email belongs to another account");
     await this.pg.ensureUserFolders(user.id);
     return rowToUser(user);
+  }
+
+  private async signInLinked(sub: string, address: string): Promise<RequestUser | null> {
+    const { rows } = await this.pg.systemQuery(`SELECT user_id, aegis_sub FROM user_logins WHERE email_bidx = $1`, [
+      await addressIndex("users.email", address),
+    ]);
+    const link = rows[0];
+    if (!link) return null;
+    // Same rule as users: the first Aegis account to sign in with the address keeps it.
+    if (link.aegis_sub && link.aegis_sub !== sub) throw new Error("This email belongs to another account");
+    if (!link.aegis_sub) await this.pg.systemQuery(`UPDATE user_logins SET aegis_sub = $2 WHERE user_id = $1 AND email_bidx = $3`, [link.user_id, sub, await addressIndex("users.email", address)]);
+    await this.pg.systemQuery(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [link.user_id]);
+    const user = await this.byId(link.user_id);
+    if (!user) return null;
+    await this.pg.ensureUserFolders(user.id);
+    return user;
+  }
+
+  // ── Linked sign-ins (an admin links someone's Gmail to their account) ──
+
+  async loginsOf(userId: string): Promise<string[]> {
+    const { rows } = await this.pg.systemQuery(`SELECT email FROM user_logins WHERE user_id = $1`, [userId]);
+    return (await Promise.all(rows.map((r: any) => openIdentity("user_logins.email", r.email)))).filter((e): e is string => !!e).sort();
+  }
+
+  /**
+   * Lets `address` sign in to `userId`'s account. Refused (a reason) when the
+   * address already is an account, a link, a mailbox or a group: linking must
+   * never take over someone else's sign-in or mail.
+   */
+  async linkLogin(userId: string, address: string): Promise<string | null> {
+    const lower = normalizeAddress(address);
+    const bidx = await addressIndex("users.email", lower);
+    const account = await this.pg.systemQuery(`SELECT 1 FROM users WHERE email_bidx = $1`, [bidx]);
+    if (account.rows.length) return "That address already has its own Missive account";
+    if (await this.addressTaken(lower)) return "That address is a Missive mailbox or group";
+    const { rows } = await this.pg.systemQuery(
+      `INSERT INTO user_logins (email_bidx, email, user_id) VALUES ($1, $2, $3) ON CONFLICT (email_bidx) DO NOTHING RETURNING 1`,
+      [bidx, await sealIdentity("user_logins.email", lower), userId],
+    );
+    return rows.length ? null : "That address is already linked to an account";
+  }
+
+  async unlinkLogin(userId: string, address: string): Promise<boolean> {
+    const { rowCount } = await this.pg.systemQuery(`DELETE FROM user_logins WHERE user_id = $1 AND email_bidx = $2`, [
+      userId, await addressIndex("users.email", normalizeAddress(address)),
+    ]);
+    return (rowCount ?? 0) > 0;
   }
 
   async byId(id: string): Promise<RequestUser | null> {
@@ -105,7 +156,7 @@ export class UsersService {
   }
 
   /** Everyone, for the admin console: who they are, their organization, and their mailboxes. */
-  async directory(): Promise<{ id: string; email: string; name?: string; client: string | null; tenant: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[] }[]> {
+  async directory(): Promise<{ id: string; email: string; name?: string; client: string | null; tenant: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[]; logins: string[] }[]> {
     const { rows } = await this.pg.systemQuery(`SELECT id, email, name, aegis_client, aegis_tenant, aegis_sub, last_login_at FROM users`);
     const people = await Promise.all(
       rows.map(async (r: any) => ({
@@ -117,6 +168,7 @@ export class UsersService {
         signedIn: !!r.aegis_sub,
         lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : null,
         mailboxes: (await this.mailboxesOf(r.id)).map((m) => m.address),
+        logins: await this.loginsOf(r.id),
       })),
     );
     return people.sort((a, b) => a.email.localeCompare(b.email));

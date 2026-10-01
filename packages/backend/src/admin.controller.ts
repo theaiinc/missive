@@ -153,6 +153,33 @@ export class AdminController {
     return { members: await this.groups.members(id) };
   }
 
+  /** Someone in an organization this admin administers. */
+  private async personFor(scope: AdminScope, userId: string) {
+    const person = (await this.users.directory()).find((u) => u.id === userId);
+    if (!person || !(scope.platform || (person.tenant && scope.tenants.includes(person.tenant)))) throw new NotFoundException("No such user");
+    return person;
+  }
+
+  /** Lets someone also sign in with another address of theirs (their Gmail), into this same account and mailbox. */
+  @Post("users/:userId/logins")
+  async linkLogin(@Param("userId") userId: string, @Body() body: Record<string, unknown>) {
+    const { scope } = await this.access.require();
+    await this.personFor(scope, userId);
+    const email = (text(body.email) ?? "").toLowerCase();
+    if (!/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(email)) throw new BadRequestException("Give an email address, like name@gmail.com");
+    const problem = await this.users.linkLogin(userId, email);
+    if (problem) throw new ConflictException(problem);
+    return { logins: await this.users.loginsOf(userId) };
+  }
+
+  @Delete("users/:userId/logins/:email")
+  async unlinkLogin(@Param("userId") userId: string, @Param("email") email: string) {
+    const { scope } = await this.access.require();
+    await this.personFor(scope, userId);
+    if (!(await this.users.unlinkLogin(userId, email))) throw new NotFoundException();
+    return { logins: await this.users.loginsOf(userId) };
+  }
+
   @Delete("groups/:id/members/:userId")
   async removeMember(@Param("id") id: string, @Param("userId") userId: string) {
     const { scope } = await this.access.require();

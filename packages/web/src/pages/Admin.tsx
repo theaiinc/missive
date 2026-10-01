@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Building2, Users, UsersRound, Plus, Trash2, Link2, Copy } from "lucide-react";
+import { Building2, Users, UsersRound, Plus, Trash2, Link2, Copy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { useMe } from "@/hooks/useMe";
 
 type Role = "owner" | "moderator" | "member";
 type Org = { clientId: string; host: string; appUrl: string; name: string; domains: string[] };
-type Person = { id: string; email: string; name?: string; client: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[] };
+type Person = { id: string; email: string; name?: string; client: string | null; signedIn: boolean; lastLoginAt: string | null; mailboxes: string[]; logins: string[] };
 type Member = { userId: string; email: string; name?: string; role: Role; mailboxes: string[] };
 type Group = { id: string; address: string; domain: string; name?: string; org: string; members: Member[] };
 type Overview = { organizations: Org[]; domains: { name: string; org: string }[]; users: Person[]; groups: Group[] };
@@ -171,6 +171,7 @@ function People({ data }: { data: Overview }) {
                 <th className="text-left font-medium px-3 py-2">Account</th>
                 <th className="text-left font-medium px-3 py-2">Organization</th>
                 <th className="text-left font-medium px-3 py-2">Mailboxes</th>
+                <th className="text-left font-medium px-3 py-2">Also signs in with</th>
                 <th className="text-left font-medium px-3 py-2">Last sign-in</th>
               </tr>
             </thead>
@@ -183,6 +184,9 @@ function People({ data }: { data: Overview }) {
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">{orgName(data, u.client)}</td>
                   <td className="px-3 py-2">{u.mailboxes.length ? u.mailboxes.join(", ") : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="px-3 py-2">
+                    <Logins person={u} />
+                  </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : u.signedIn ? "—" : "Not signed in yet"}
                   </td>
@@ -192,6 +196,57 @@ function People({ data }: { data: Overview }) {
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+/** Other addresses (their Gmail) that sign in to this person's account and mailbox. */
+function Logins({ person }: { person: Person }) {
+  const qc = useQueryClient();
+  const [email, setEmail] = useState("");
+  const done = () => qc.invalidateQueries({ queryKey: ["admin"] });
+  const fail = (e: unknown) => toast.error((e as Error).message);
+  const link = useMutation({
+    mutationFn: () => api(`users/${person.id}/logins`, { method: "POST", body: JSON.stringify({ email }) }),
+    onSuccess: () => {
+      toast.success(`${email} now signs in to ${person.email}`);
+      setEmail("");
+      return done();
+    },
+    onError: fail,
+  });
+  const unlink = useMutation({
+    mutationFn: (address: string) => api(`users/${person.id}/logins/${encodeURIComponent(address)}`, { method: "DELETE" }),
+    onSuccess: done,
+    onError: fail,
+  });
+  return (
+    <div className="space-y-1.5">
+      {person.logins.map((l) => (
+        <div key={l} className="flex items-center gap-1 text-sm">
+          <span className="truncate">{l}</span>
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-destructive"
+            title={`Stop ${l} signing in to this account`}
+            onClick={() => unlink.mutate(l)}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))}
+      <form
+        className="flex gap-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          link.mutate();
+        }}
+      >
+        <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@gmail.com" className="h-8 min-w-0 text-xs" required />
+        <Button type="submit" size="sm" variant="outline" className="h-8" disabled={link.isPending}>
+          Link
+        </Button>
+      </form>
     </div>
   );
 }
