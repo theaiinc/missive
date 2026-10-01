@@ -65,7 +65,7 @@ export class ConnectorController {
   @Get("gmail/status")
   async getGmailStatus(): Promise<{
     connected: boolean;
-    accounts: { id: string; email: string; label: string; connectedAt: string; lastSyncAt?: string | null }[];
+    accounts: { id: string; email: string; label: string; connectedAt: string; lastSyncAt?: string | null; needsReauth?: boolean; lastError?: string | null }[];
   }> {
     const accounts = await this.store.list("gmail");
     return {
@@ -76,6 +76,8 @@ export class ConnectorController {
         label: a.label,
         connectedAt: a.connectedAt,
         lastSyncAt: a.lastSyncAt,
+        needsReauth: a.status === "needs_reauth",
+        lastError: a.lastError ?? null,
       })),
     };
   }
@@ -180,7 +182,7 @@ export class ConnectorController {
   @Get("outlook/status")
   async getOutlookStatus(): Promise<{
     connected: boolean;
-    accounts: { id: string; email: string; label: string; connectedAt: string; lastSyncAt?: string | null }[];
+    accounts: { id: string; email: string; label: string; connectedAt: string; lastSyncAt?: string | null; needsReauth?: boolean; lastError?: string | null }[];
   }> {
     const accounts = await this.store.list("outlook");
     return {
@@ -191,6 +193,8 @@ export class ConnectorController {
         label: a.label,
         connectedAt: a.connectedAt,
         lastSyncAt: a.lastSyncAt,
+        needsReauth: a.status === "needs_reauth",
+        lastError: a.lastError ?? null,
       })),
     };
   }
@@ -273,7 +277,7 @@ export class ConnectorController {
   @Get("imap/status")
   async getImapStatus(): Promise<{
     connected: boolean;
-    accounts: { id: string; email: string; label: string; connectedAt: string; lastSyncAt?: string | null }[];
+    accounts: { id: string; email: string; label: string; connectedAt: string; lastSyncAt?: string | null; needsReauth?: boolean; lastError?: string | null }[];
   }> {
     const accounts = await this.store.list("imap");
     return {
@@ -284,6 +288,8 @@ export class ConnectorController {
         label: a.label,
         connectedAt: a.connectedAt,
         lastSyncAt: a.lastSyncAt,
+        needsReauth: a.status === "needs_reauth",
+        lastError: a.lastError ?? null,
       })),
     };
   }

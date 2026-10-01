@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useEffect, useState } from "react";
-import { RefreshCw, Trash2, Plus, Loader2, KeyRound } from "lucide-react";
+import { RefreshCw, Trash2, Plus, Loader2, KeyRound, AlertCircle } from "lucide-react";
 import { useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors, colorOptions } from "@/hooks/useAccountColors";
@@ -18,6 +18,8 @@ interface AccountInfo {
   label: string;
   connectedAt: string;
   lastSyncAt: string | null;
+  needsReauth?: boolean;
+  lastError?: string | null;
 }
 
 interface ProviderStatus {
@@ -68,11 +70,13 @@ function AccountCard({
   account,
   onSync,
   onDisconnect,
+  onReconnect,
   syncing,
 }: {
   account: AccountInfo;
   onSync: () => void;
   onDisconnect: () => void;
+  onReconnect: () => void;
   syncing: boolean;
 }) {
   const { getColor, setColor } = useAccountColors();
@@ -80,6 +84,7 @@ function AccountCard({
   const color = getColor(account.email);
 
   return (
+    <div className="space-y-1">
     <Card className="flex items-center justify-between p-4">
       <div className="flex items-center gap-3 min-w-0">
         <div className="w-10 h-10 rounded-lg flex items-center justify-center text-base font-bold bg-red-100 text-red-600 flex-shrink-0">
@@ -148,11 +153,27 @@ function AccountCard({
         >
           <Trash2 className="w-3.5 h-3.5" />
         </Button>
-        <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border-0">
-          Connected
-        </Badge>
+        {account.needsReauth ? (
+          <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-200 border-0">
+            Needs reconnecting
+          </Badge>
+        ) : (
+          <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border-0">
+            Connected
+          </Badge>
+        )}
       </div>
     </Card>
+    {account.needsReauth && (
+      <div className="mx-2 flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+        <span className="flex-1 min-w-0">
+          {account.lastError ?? "The provider no longer accepts the saved sign-in."} Mail isn't syncing until you reconnect.
+        </span>
+        <button className="underline font-medium shrink-0" onClick={onReconnect}>Reconnect</button>
+      </div>
+    )}
+    </div>
   );
 }
 
@@ -291,6 +312,7 @@ function ProviderSection({
               account={account}
               onSync={() => onSync(account.email)}
               onDisconnect={() => onDisconnect(account.id)}
+              onReconnect={onConnect}
               syncing={syncingEmail === account.email}
             />
           ))}

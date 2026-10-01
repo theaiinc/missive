@@ -1,11 +1,20 @@
 import { safeError } from "./log-safe";
 import { Injectable } from "@nestjs/common";
 import { google } from "googleapis";
-import { ConnectorStore, type StoredConnector } from "./connector.store";
+import { ConnectorStore, ReauthRequiredError, type StoredConnector } from "./connector.store";
 import { StorageService } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive } from "@theaiinc/missive-core";
+
+/**
+ * A sync result for an account the provider no longer lets us in to.
+ * `newlyFlagged` is true only on the sync that found out, so callers can
+ * announce it once rather than on every tick.
+ */
+function reauthResult(reason: string | null | undefined, newlyFlagged: boolean) {
+  return { error: reason || "Reconnect required", needsReauth: true, newlyFlagged };
+}
 
 @Injectable()
 export class SyncService {
@@ -35,16 +44,15 @@ export class SyncService {
 
     for (const connector of accounts) {
       try {
-        const oauth2 = this.store.getOAuthClientForConnector(connector);
-
-        // Refresh if expired
-        if (
-          connector.tokens.expiry_date &&
-          Date.now() >= connector.tokens.expiry_date
-        ) {
-          const { credentials } = await oauth2.refreshAccessToken();
-          connector.tokens = credentials as typeof connector.tokens;
+        if (connector.status === "needs_reauth") {
+          results[connector.email] = reauthResult(connector.lastError, false);
+          continue;
         }
+
+        // Refreshes (and saves) the tokens when expired; marks the account for
+        // reconnecting if the provider refuses the refresh token.
+        const oauth2 = this.store.createOAuth2Client();
+        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(connector.id) });
 
         const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
 
@@ -176,7 +184,8 @@ export class SyncService {
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
       } catch (err) {
         console.error("Gmail sync error:", safeError(err));
-        results[connector.email] = { error: "Sync failed" };
+        results[connector.email] =
+          err instanceof ReauthRequiredError ? reauthResult(err.message, true) : { error: "Sync failed" };
       }
     }
 
@@ -202,16 +211,16 @@ export class SyncService {
 
     for (const connector of accounts) {
       try {
-        // Refresh if expired
-        let tokens = connector.tokens;
-        if (tokens.expiry_date && Date.now() >= tokens.expiry_date) {
-          tokens = await this.store.refreshOutlookTokens(
-            tokens.refresh_token ?? ""
-          );
+        if (connector.status === "needs_reauth") {
+          results[connector.email] = reauthResult(connector.lastError, false);
+          continue;
         }
 
+        // Refreshes and saves the tokens (including a rotated refresh token) when expired.
+        const accessToken = await this.store.getValidOutlookToken(connector.id);
+
         const headers: Record<string, string> = {
-          Authorization: `Bearer ${tokens.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         };
 
@@ -332,7 +341,8 @@ export class SyncService {
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
       } catch (err) {
         console.error("Outlook sync error:", safeError(err));
-        results[connector.email] = { error: "Sync failed" };
+        results[connector.email] =
+          err instanceof ReauthRequiredError ? reauthResult(err.message, true) : { error: "Sync failed" };
       }
     }
 

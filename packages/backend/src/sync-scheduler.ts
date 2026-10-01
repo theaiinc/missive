@@ -68,6 +68,7 @@ export class SyncScheduler implements OnModuleInit {
         (acc: number, r: any) => acc + (r.synced ?? 0),
         0
       );
+      this.reportReauth("Gmail", gmailResults);
       if (gmailTotal > 0) {
         this.logger.log(`Auto-sync Gmail: ${gmailTotal} new message(s)`);
         syncMessage += `Synced **${gmailTotal}** new Gmail message(s). `;
@@ -82,6 +83,7 @@ export class SyncScheduler implements OnModuleInit {
         (acc: number, r: any) => acc + (r.synced ?? 0),
         0
       );
+      this.reportReauth("Outlook", outlookResults);
       if (outlookTotal > 0) {
         this.logger.log(`Auto-sync Outlook: ${outlookTotal} new message(s)`);
         syncMessage += `Synced **${outlookTotal}** new Outlook message(s). `;
@@ -121,6 +123,21 @@ export class SyncScheduler implements OnModuleInit {
     // Periodically evaluate rules against pending missives
     // (catches missives that were classified after their initial sync)
     await this.runRuleEvaluation();
+  }
+
+  /**
+   * Accounts the provider has locked us out of are not retried; say so where
+   * the person will see it (once, when it happens). Settings keeps showing the
+   * Reconnect alert from the stored status.
+   */
+  private reportReauth(provider: string, results: Record<string, any>) {
+    const flagged = Object.values(results).filter((r: any) => r?.needsReauth);
+    if (flagged.length === 0) return;
+    const fresh = flagged.filter((r: any) => r.newlyFlagged).length;
+    this.logger.warn(`Auto-sync ${provider}: ${flagged.length} account(s) need reconnecting, skipped`);
+    if (fresh > 0) {
+      this.events.emit("sync", `**${fresh}** ${provider} account(s) need to be reconnected in Settings — syncing is paused for them.`);
+    }
   }
 
   private async runOrganizer() {
