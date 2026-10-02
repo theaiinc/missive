@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Missive, Thread, EntityReference, RuleProposal } from "./types";
 
 // ──────────────────────────────────────────────
@@ -123,3 +124,30 @@ export interface EventBus {
     handler: (event: MissiveEvent) => Promise<void>
   ): Promise<void>;
 }
+
+// ──────────────────────────────────────────────
+// Personal API tokens — another app calls the API as a user with
+// `Authorization: Bearer msv_...`. Managed only from a signed-in session.
+// ──────────────────────────────────────────────
+
+export const CreateApiTokenRequestSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+});
+export type CreateApiTokenRequest = z.infer<typeof CreateApiTokenRequestSchema>;
+
+/** A token as listed: never the token itself or its hash. */
+export const ApiTokenSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  /** The first characters after `msv_`, to tell tokens apart. */
+  prefix: z.string(),
+  createdAt: z.string(),
+  lastUsedAt: z.string().nullable(),
+});
+export type ApiToken = z.infer<typeof ApiTokenSchema>;
+
+/** Returned once, by the create call; `token` is never shown again. */
+export const CreatedApiTokenSchema = ApiTokenSchema.omit({ lastUsedAt: true }).extend({
+  token: z.string(),
+});
+export type CreatedApiToken = z.infer<typeof CreatedApiTokenSchema>;

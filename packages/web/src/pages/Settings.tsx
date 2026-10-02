@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useEffect, useState } from "react";
-import { RefreshCw, Trash2, Plus, Loader2, KeyRound, AlertCircle, Bell } from "lucide-react";
+import { RefreshCw, Trash2, Plus, Loader2, KeyRound, AlertCircle, Bell, Copy } from "lucide-react";
+import type { ApiToken, CreatedApiToken } from "@theaiinc/missive-core";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/push";
 import { useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
@@ -1034,6 +1035,8 @@ export function Settings() {
       <div className="flex-1 px-4 sm:px-8 py-6 space-y-8 overflow-y-auto">
         {me?.accountUrl && <SignInSecurity accountUrl={me.accountUrl} email={me.email} />}
 
+        <ApiTokens />
+
         {/* Connected Accounts */}
         <section>
           <div className="flex items-center gap-2 mb-4">
@@ -1241,6 +1244,126 @@ function SignInSecurity({ accountUrl, email }: { accountUrl: string; email: stri
           Change password
         </Button>
       </div>
+    </section>
+  );
+}
+
+async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body as T;
+}
+
+/**
+ * Personal API tokens: another app calls the Missive API as you with
+ * `Authorization: Bearer msv_...`. A new token is shown once, right here.
+ */
+function ApiTokens() {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<CreatedApiToken | null>(null);
+  const { data: tokens, isLoading, isError } = useQuery({
+    queryKey: ["api-tokens"],
+    queryFn: () => apiJson<ApiToken[]>("/api/v1/api-tokens"),
+  });
+  const create = useMutation({
+    mutationFn: (tokenName: string) =>
+      apiJson<CreatedApiToken>("/api/v1/api-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: tokenName }),
+      }),
+    onSuccess: (token) => {
+      setCreated(token);
+      setName("");
+      queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+    },
+    onError: (e: Error) => toast.error(`Couldn't create the token: ${e.message}`),
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => apiJson(`/api/v1/api-tokens/${id}`, { method: "DELETE" }),
+    onSuccess: (_, id) => {
+      if (created?.id === id) setCreated(null);
+      queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+      toast.success("Token revoked");
+    },
+    onError: (e: Error) => toast.error(`Couldn't revoke the token: ${e.message}`),
+  });
+  const submit = () => {
+    if (name.trim() && !create.isPending) create.mutate(name.trim());
+  };
+
+  return (
+    <section>
+      <h3 className="text-sm font-medium text-foreground mb-2">API tokens</h3>
+      <p className="text-sm text-muted-foreground mb-3">
+        Let another app read your mail through the Missive API, as you. Send the token as{" "}
+        <code className="text-xs">Authorization: Bearer msv_…</code>. Revoke a token to cut that app off.
+      </p>
+      <Card className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            value={name}
+            maxLength={100}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            placeholder="Token name, like Simasis"
+            className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary"
+          />
+          <Button variant="outline" size="sm" onClick={submit} disabled={!name.trim() || create.isPending}>
+            {create.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}
+            Create
+          </Button>
+        </div>
+
+        {created && (
+          <div className="mb-3 rounded-lg border border-primary/40 bg-primary/5 p-3">
+            <p className="text-xs font-medium text-foreground mb-1.5">
+              Copy “{created.name}” now. It won't be shown again.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 min-w-0 break-all text-xs bg-background border border-border rounded px-2 py-1.5">{created.token}</code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigator.clipboard.writeText(created.token).then(() => toast.success("Copied"))}
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <button className="text-xs text-muted-foreground hover:text-foreground mt-2" onClick={() => setCreated(null)}>
+              Done
+            </button>
+          </div>
+        )}
+
+        {isLoading && <p className="text-xs text-muted-foreground px-1">Loading…</p>}
+        {isError && <p className="text-xs text-destructive px-1">Couldn't load your API tokens.</p>}
+        {tokens && tokens.length === 0 && <p className="text-xs text-muted-foreground px-1">No API tokens yet.</p>}
+        <div className="space-y-1.5">
+          {tokens?.map((t) => (
+            <div key={t.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/20">
+              <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-foreground truncate">{t.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  <code>msv_{t.prefix}…</code> · created {formatRelativeTime(t.createdAt)} ·{" "}
+                  {t.lastUsedAt ? `last used ${formatRelativeTime(t.lastUsedAt)}` : "never used"}
+                </p>
+              </div>
+              <button
+                onClick={() => { if (window.confirm(`Revoke “${t.name}”? Apps using it stop working.`)) revoke.mutate(t.id); }}
+                disabled={revoke.isPending}
+                className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                title="Revoke"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </Card>
     </section>
   );
 }

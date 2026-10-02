@@ -30,15 +30,16 @@ import { GroupsService } from "./groups.service";
 import { CalendarController } from "./calendar/calendar.controller";
 import { CalendarService } from "./calendar/calendar.service";
 import { PushController, PushService } from "./push.service";
+import { ApiTokensController, ApiTokensService } from "./auth/api-tokens";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController],
-  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService],
+  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController],
+  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule implements NestModule {
-  /** Every route needs an Aegis session except sign-in, health and inbound mail (see AuthMiddleware). */
+  /** Every route needs an Aegis session (or a personal API token) except sign-in, health and inbound mail (see AuthMiddleware). */
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(AuthMiddleware).forRoutes("*");
   }
