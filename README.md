@@ -199,6 +199,27 @@ pnpm dev
 - **Test Connection:** Validate credentials before saving
 - **XOAUTH2:** Quick-connect using an already-authorized OAuth account
 
+### Calling the API from another app (personal API tokens)
+
+Another app can call the Missive API server-to-server as you with a personal API token.
+
+1. Sign in, open **Settings → API tokens**, enter a name (e.g. `Simasis`) and click **Create**.
+2. Copy the token (`msv_…`). It is shown once; only its SHA-256 hash is stored.
+3. Send it as a bearer token:
+
+```bash
+curl -H "Authorization: Bearer msv_..." "https://missive.theaiinc.com/api/v1/search?query=invoice&limit=20"
+```
+
+A token acts as you on the API, e.g. `GET /api/v1/me`, `/search`, `/thread/:id`, `/thread/:id/missives`,
+`/missive/:id`, `/recent-missives`, `/digest`, `/organizations`, `/projects`. Unknown or revoked tokens get
+`401 {"error":"Sign in required"}`. A token can't manage tokens (`/api/v1/api-tokens`) or use the admin
+console API (`/api/v1/admin/*`): those return 403 and need the signed-in session.
+
+Token endpoints (session cookie only): `GET /api/v1/api-tokens` lists your live tokens (name, prefix, created,
+last used), `POST /api/v1/api-tokens` with `{"name": "..."}` creates one and returns the token once, and
+`DELETE /api/v1/api-tokens/:id` revokes one.
+
 ## Architecture Philosophy
 
 Missive is designed as a **read-heavy, event-emitting layer** within a larger AI platform:

@@ -1,5 +1,5 @@
 import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, NotFoundException, Param, Patch, Post, Put } from "@nestjs/common";
-import { requireUser } from "./request-context";
+import { requireSessionUser } from "./request-context";
 import { PostgresService } from "./storage/postgres.service";
 import { UsersService, type AdminScope } from "./users.service";
 import { GROUP_ROLES, GroupsService, type GroupRole } from "./groups.service";
@@ -22,7 +22,7 @@ export class AdminAccess {
 
   /** The signed-in admin and what they may administer; 403 for anyone else. */
   async require(): Promise<{ id: string; scope: AdminScope }> {
-    const user = requireUser();
+    const user = requireSessionUser();
     const scope = await this.users.adminScope(user.id);
     if (!scope) throw new ForbiddenException("Admins only");
     return { id: user.id, scope };
