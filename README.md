@@ -220,6 +220,23 @@ Token endpoints (session cookie only): `GET /api/v1/api-tokens` lists your live 
 last used), `POST /api/v1/api-tokens` with `{"name": "..."}` creates one and returns the token once, and
 `DELETE /api/v1/api-tokens/:id` revokes one.
 
+### Connecting through Aegis (no token to paste)
+
+An app on Aegis (Simasis) can instead connect Missive with OAuth: it sends you to Aegis with
+`resource=https://missive.theaiinc.com/api` and the scope `missive:read`, and calls the API with the access
+token Aegis returns (a JWT, `Authorization: Bearer eyJ…`).
+
+- Missive checks the token's signature against Aegis's `/jwks`, then the issuer, the audience (the resource
+  above, or `MISSIVE_API_RESOURCE`), the expiry and the `missive:read` scope.
+- It runs as the Missive account your Aegis subject signs in to. It never creates one: you need to have
+  signed in to Missive once.
+- It is read-only: `GET` on `/api/v1/me`, `/search`, `/missive/:id`, `/thread/:id`, `/thread/:id/missives`,
+  `/recent-missives` and `/digest`. Everything else gets 403.
+
+Aegis needs the resource in its `OIDC_RESOURCE_SERVERS`:
+`{"resource":"https://missive.theaiinc.com/api","scope":"missive:read","name":"Missive"}`. The connecting
+app's Aegis client must be in Missive's tenant, so your Aegis account there is the one that signs in.
+
 ## Architecture Philosophy
 
 Missive is designed as a **read-heavy, event-emitting layer** within a larger AI platform:

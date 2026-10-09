@@ -4,6 +4,7 @@ import { runAsUser, type RequestUser } from "../request-context";
 import { UsersService } from "../users.service";
 import { SESSION_COOKIE, readCookie, unseal, type Session } from "./session";
 import { ApiTokensService, TOKEN_PREFIX } from "./api-tokens";
+import { aegisTokenAllowed, looksLikeJwt, verifyAegisApiToken } from "./aegis-bearer";
 
 /** Routes that don't need a signed-in user (they check their own credentials). */
 const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/];
@@ -21,6 +22,10 @@ const SIGN_IN_REQUIRED = { error: "Sign in required", signIn: "/auth/login" };
  * for another app calling on the user's behalf: it runs as the token's owner
  * exactly like their session would, except on SESSION_ONLY routes. An unknown
  * or revoked token is refused even if a session cookie came along too.
+ *
+ * Or an Aegis access token for this API (a JWT, see aegis-bearer.ts), from an
+ * app the person connected Missive to through Aegis: read-only, on the GET
+ * routes aegis-bearer.ts lists, as the account their Aegis subject signs in to.
  *
  * Local development only: with NODE_ENV not "production", MISSIVE_DEV_USER_EMAIL
  * signs every request in as that email, so the app runs without Aegis.
@@ -64,6 +69,24 @@ export class AuthMiddleware implements NestMiddleware {
         return;
       }
       return runAsUser({ ...owner, via: "token" }, () => next());
+    }
+    if (bearer && looksLikeJwt(bearer)) {
+      if (!aegisTokenAllowed(req.method, path)) {
+        res.status(403).json({ error: "Not available with an Aegis token" });
+        return;
+      }
+      let userId: string | null = null;
+      try {
+        userId = await this.users.idForAegisSub((await verifyAegisApiToken(bearer)).sub);
+      } catch {
+        userId = null;
+      }
+      const owner = userId ? await this.userFor(userId) : null;
+      if (!owner) {
+        res.status(401).json(SIGN_IN_REQUIRED);
+        return;
+      }
+      return runAsUser({ ...owner, via: "aegis" }, () => next());
     }
 
     const session = unseal<Session>(readCookie(req.headers.cookie, SESSION_COOKIE));

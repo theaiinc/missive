@@ -117,6 +117,19 @@ export class UsersService {
   }
 
   /**
+   * The account an Aegis subject signs in to (its own, or one an admin linked
+   * it to), without creating one: an app connecting through Aegis only reaches
+   * someone who already uses Missive.
+   */
+  async idForAegisSub(sub: string): Promise<string | null> {
+    const { rows } = await this.pg.systemQuery(
+      `SELECT id FROM users WHERE aegis_sub = $1 UNION ALL SELECT user_id FROM user_logins WHERE aegis_sub = $1 LIMIT 1`,
+      [sub],
+    );
+    return rows[0]?.id ?? null;
+  }
+
+  /**
    * Records what Aegis said at sign-in: the client (organization) and tenant
    * they came in through, and their admin rights. An ADMIN in their own
    * tenant administers it; tenants they manage in Aegis count too, and so do
