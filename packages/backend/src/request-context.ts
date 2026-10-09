@@ -6,8 +6,8 @@ export type RequestUser = {
   id: string;
   email: string;
   name?: string;
-  /** How the request signed in: the browser session, or a personal API token (see AuthMiddleware). */
-  via?: "session" | "token";
+  /** How the request signed in: the browser session, a personal API token, or an Aegis access token (see AuthMiddleware). */
+  via?: "session" | "token" | "aegis";
 };
 
 const storage = new AsyncLocalStorage<RequestUser>();
@@ -33,6 +33,6 @@ export function requireUser(): RequestUser {
  */
 export function requireSessionUser(): RequestUser {
   const user = requireUser();
-  if (user.via === "token") throw new ForbiddenException("This needs a signed-in session, not an API token");
+  if (user.via === "token" || user.via === "aegis") throw new ForbiddenException("This needs a signed-in session, not an API token");
   return user;
 }
