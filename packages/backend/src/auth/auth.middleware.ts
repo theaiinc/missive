@@ -2,7 +2,9 @@ import { Injectable, NestMiddleware } from "@nestjs/common";
 import type { Request, Response, NextFunction } from "express";
 import { runAsUser, type RequestUser } from "../request-context";
 import { UsersService } from "../users.service";
-import { SESSION_COOKIE, readCookie, unseal, type Session } from "./session";
+import { REFRESH_COOKIE, SESSION_COOKIE, cookie, readCookie, unseal, type Session } from "./session";
+import { refreshSession } from "./refresh";
+import { siteFor } from "./sites";
 import { ApiTokensService, TOKEN_PREFIX } from "./api-tokens";
 import { aegisTokenAllowed, looksLikeJwt, verifyAegisApiToken } from "./aegis-bearer";
 
@@ -91,6 +93,18 @@ export class AuthMiddleware implements NestMiddleware {
 
     const session = unseal<Session>(readCookie(req.headers.cookie, SESSION_COOKIE));
     let user: RequestUser | null = session ? await this.userFor(session.userId) : null;
+
+    // The session ran out but Aegis's refresh token is still here: renew it (refresh.ts).
+    if (!session && readCookie(req.headers.cookie, REFRESH_COOKIE)) {
+      const refreshed = await refreshSession(req.headers.cookie, siteFor(req), this.users);
+      if (refreshed && "clear" in refreshed) {
+        res.append("set-cookie", cookie(REFRESH_COOKIE, "", 0));
+      } else if (refreshed) {
+        for (const c of refreshed.cookies) res.append("set-cookie", c);
+        this.cache.delete(refreshed.userId);
+        user = await this.userFor(refreshed.userId);
+      }
+    }
 
     const devEmail = process.env.MISSIVE_DEV_USER_EMAIL;
     if (!user && devEmail && process.env.NODE_ENV !== "production") {
