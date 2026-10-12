@@ -1,44 +1,25 @@
 import { Controller, Get, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
-import { createPublicKey, verify as verifySignature, type JsonWebKey } from "node:crypto";
 import { UsersService } from "../users.service";
 import { GroupsService } from "../groups.service";
 
 import { requireUser } from "../request-context";
 import {
-  SESSION_COOKIE, STATE_COOKIE, INVITE_COOKIE, SESSION_HOURS,
-  seal, unseal, readCookie, cookie, randomToken, pkceChallenge, type Session,
+  SESSION_COOKIE, STATE_COOKIE, INVITE_COOKIE, REFRESH_COOKIE, SESSION_HOURS, REFRESH_COOKIE_SECONDS,
+  seal, unseal, encrypt, readCookie, cookie, randomToken, pkceChallenge, type Session, type SavedRefresh,
 } from "./session";
+import { issuer, verifyIdToken } from "./oidc";
 import { siteFor, type Site } from "./sites";
+import { syncSignIn, type IdClaimsWithIdentity } from "./refresh";
 
 /**
  * Sign-in with Aegis ID (OIDC authorization code + PKCE, confidential client).
  * Env: AEGIS_ISSUER (default https://id.theaiinc.com), SESSION_SECRET, and
  * the Aegis client for each address Missive is served at (see sites.ts).
  */
-const issuer = () => process.env.AEGIS_ISSUER ?? "https://id.theaiinc.com";
 const redirectUri = (site: Site) => `${site.appUrl}/auth/callback`;
 
-type IdClaims = { iss?: string; sub?: string; aud?: string | string[]; exp?: number; nonce?: string; email?: string; email_verified?: boolean; name?: string; mailbox_domain?: unknown ; roles?: unknown; role?: unknown; home_tenant_id?: unknown; managed_tenant_ids?: unknown; platform_admin?: unknown; console_platform_admin?: unknown; console_managed_tenant_ids?: unknown };
 type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; clientId: string; exp: number };
-
-/** Checks the id_token's RS256 signature against Aegis's JWKS, then issuer, audience, expiry and nonce. */
-async function verifyIdToken(token: string, nonce: string, clientId: string): Promise<IdClaims | null> {
-  const [h, p, sig] = token.split(".");
-  if (!h || !p || !sig) return null;
-  const header = JSON.parse(Buffer.from(h, "base64url").toString()) as { alg?: string; kid?: string };
-  if (header.alg !== "RS256") return null;
-  const jwks = (await (await fetch(`${issuer()}/jwks`)).json()) as { keys: (JsonWebKey & { kid?: string })[] };
-  const jwk = jwks.keys.find((k) => k.kid === header.kid);
-  if (!jwk) return null;
-  const key = createPublicKey({ key: jwk, format: "jwk" });
-  if (!verifySignature("RSA-SHA256", Buffer.from(`${h}.${p}`), key, Buffer.from(sig, "base64url"))) return null;
-  const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as IdClaims;
-  const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (claims.iss !== issuer() || !aud.includes(clientId)) return null;
-  if (!claims.exp || claims.exp * 1000 < Date.now() || claims.nonce !== nonce) return null;
-  return claims;
-}
 
 /** The person's Aegis account page (password, passkeys, two-step sign-in) in this site's tenant. */
 export function aegisAccountUrl(site: Site): string {
@@ -86,10 +67,13 @@ export class AuthController {
       // "mailbox": Aegis adds mailbox_domain for a blank account that may claim a hosted mailbox.
       // "admin": the person's roles in their tenant; "console": their Aegis console
       // rights (platform admin, managed tenants). Together: who may use the admin console.
-      scope: "openid email profile mailbox admin console",
+      // "offline_access": a refresh token, so a session that runs out is renewed
+      // while the person keeps using Missive (refresh.ts).
+      scope: "openid email profile mailbox admin console offline_access",
       // "Try again" after a refused sign-in asks Aegis for the login again,
-      // instead of reusing the Aegis session that was just refused.
-      ...(req.query.prompt === "login" ? { prompt: "login" } : {}),
+      // instead of reusing the Aegis session that was just refused. Aegis drops
+      // offline_access under a prompt that doesn't include "consent".
+      ...(req.query.prompt === "login" ? { prompt: "login consent" } : {}),
       state: saved.state,
       nonce: saved.nonce,
       code_challenge: pkceChallenge(verifier),
@@ -122,29 +106,29 @@ export class AuthController {
     if (!tokenResponse.ok) {
       return res.status(502).type("html").send(`<p>Aegis didn't accept the sign-in. <a href="/auth/login?prompt=login">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
     }
-    const tokens = (await tokenResponse.json()) as { id_token?: string };
+    const tokens = (await tokenResponse.json()) as { id_token?: string; refresh_token?: string };
     const claims = tokens.id_token ? await verifyIdToken(tokens.id_token, saved.nonce, site.clientId) : null;
     if (!claims?.sub || !claims.email || claims.email_verified !== true) {
       return res.status(403).type("html").send(`<p>Your Aegis account needs a verified email. Verify it in Aegis, or ask your admin to set it up. <a href="/auth/login?prompt=login">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
     }
     let user;
     try {
-      user = await this.users.signIn(claims.sub, claims.email, claims.name);
+      user = await syncSignIn(this.users, site.clientId, claims as IdClaimsWithIdentity);
     } catch {
       return res.status(403).type("html").send(`<p>${claims.email.replace(/[<>&"]/g, "")} is already linked to another Aegis account.</p>`);
     }
-    // Their organization (the client and tenant they came in through) and admin rights, as Aegis says now.
-    await this.users.recordSignIn(user.id, site.clientId, claims);
-    // Refreshed on every sign-in: the offer follows what Aegis says now.
-    await this.users.setMailboxOffer(user.id, typeof claims.mailbox_domain === "string" ? claims.mailbox_domain.toLowerCase() : null);
     // Came in through a mailbox invitation: that address is theirs now (once).
     const invite = unseal<{ token: string; exp: number }>(readCookie(req.headers.cookie, INVITE_COOKIE));
     if (invite) await this.users.claimInvite(invite.token, user.id);
     // An admin-provisioned account for a hosted address gets that mailbox.
     await this.users.provisionOwnAddress(user.id, claims.email, claims.name);
     const session: Session = { userId: user.id, exp: Date.now() + SESSION_HOURS * 3600_000 };
+    const refresh: SavedRefresh | null = tokens.refresh_token
+      ? { token: tokens.refresh_token, clientId: site.clientId, exp: Date.now() + REFRESH_COOKIE_SECONDS * 1000 }
+      : null;
     res.setHeader("set-cookie", [
       cookie(SESSION_COOKIE, seal(session), SESSION_HOURS * 3600),
+      ...(refresh ? [cookie(REFRESH_COOKIE, encrypt(refresh), REFRESH_COOKIE_SECONDS)] : []),
       cookie(STATE_COOKIE, "", 0),
       cookie(INVITE_COOKIE, "", 0),
     ]);
@@ -159,7 +143,7 @@ export class AuthController {
    */
   @Get("auth/logout")
   logout(@Req() req: Request, @Res() res: Response) {
-    res.setHeader("set-cookie", cookie(SESSION_COOKIE, "", 0));
+    res.setHeader("set-cookie", [cookie(SESSION_COOKIE, "", 0), cookie(REFRESH_COOKIE, "", 0)]);
     res.redirect(302, aegisLogoutUrl(siteFor(req)));
   }
 

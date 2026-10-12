@@ -1,12 +1,17 @@
-import { createHmac, timingSafeEqual, randomBytes, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, timingSafeEqual, randomBytes, createHash } from "node:crypto";
 
 // Signed (not encrypted) cookies: they carry ids and an expiry, nothing secret.
+// The exception is REFRESH_COOKIE, which holds a credential and is encrypted.
 
 export const SESSION_COOKIE = "missive_session";
 export const STATE_COOKIE = "missive_oidc";
 /** A mailbox invitation being used by the sign-in in progress (see InviteController). */
 export const INVITE_COOKIE = "missive_invite";
 export const SESSION_HOURS = 12;
+/** Aegis's refresh token (refresh.ts), encrypted. Aegis decides how long it actually works. */
+export const REFRESH_COOKIE = "missive_refresh";
+export const REFRESH_COOKIE_SECONDS = 90 * 24 * 3600;
+export type SavedRefresh = { token: string; clientId: string; exp: number };
 
 /**
  * Only ids and an expiry: the cookie is signed, not encrypted, so it must not
@@ -56,6 +61,31 @@ export function cookie(name: string, value: string, maxAgeSeconds: number): stri
   // Secure is dropped only for plain-http local development.
   const secure = (process.env.APP_URL ?? "").startsWith("https://") ? "; Secure" : "";
   return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+/** AES-256-GCM under a key derived from SESSION_SECRET, for a cookie that holds a credential. */
+const encryptionKey = () => createHash("sha256").update(`missive-refresh:${secret()}`).digest();
+
+export function encrypt(value: { exp: number }): string {
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const body = Buffer.concat([c.update(JSON.stringify(value), "utf8"), c.final()]);
+  return [iv, c.getAuthTag(), body].map(b64url).join(".");
+}
+
+/** The value if it decrypts, authenticates and `exp` hasn't passed. */
+export function decrypt<T extends { exp: number }>(token: string | undefined): T | null {
+  if (!token) return null;
+  const [iv, tag, body] = token.split(".").map((p) => Buffer.from(p ?? "", "base64url"));
+  if (!iv?.length || !tag?.length || !body) return null;
+  try {
+    const d = createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+    d.setAuthTag(tag);
+    const value = JSON.parse(Buffer.concat([d.update(body), d.final()]).toString("utf8")) as T;
+    return typeof value.exp === "number" && value.exp > Date.now() ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export const randomToken = () => b64url(randomBytes(32));
