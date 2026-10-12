@@ -31,10 +31,11 @@ import { CalendarController } from "./calendar/calendar.controller";
 import { CalendarService } from "./calendar/calendar.service";
 import { PushController, PushService } from "./push.service";
 import { ApiTokensController, ApiTokensService } from "./auth/api-tokens";
+import { ApiTokenGrantController } from "./auth/api-token-grant";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController],
+  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController],
   providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
