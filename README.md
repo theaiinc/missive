@@ -220,6 +220,23 @@ Token endpoints (session cookie only): `GET /api/v1/api-tokens` lists your live 
 last used), `POST /api/v1/api-tokens` with `{"name": "..."}` creates one and returns the token once, and
 `DELETE /api/v1/api-tokens/:id` revokes one.
 
+#### Straight into Arcana (no copying)
+
+`arcana secret import-missive-token` stores a token in Arcana without it passing through a clipboard. It opens
+
+```
+https://missive.theaiinc.com/api/v1/api-tokens/grant?callback=http://127.0.0.1:51824/callback&state=<random>&app=Arcana&name=Arcana
+```
+
+Signed out, Missive sends you through the normal sign-in and back. The page asks "Allow Arcana to use your
+Missive account?", naming the token and your account; **Allow** creates the token (a same-origin POST to the same
+path, carrying a signed 10-minute grant bound to you, the callback, the state and the name) and sends the browser
+to `http://127.0.0.1:51824/callback?state=…#token=msv_…&state=…`; **Deny** sends `#error=access_denied&state=…`.
+The token is only ever in the URL fragment, which browsers don't send to a server. Only Arcana's loopback
+callback (`http://127.0.0.1:51824/callback`, exactly) is accepted, and only a signed-in session can grant: an API
+token or an Aegis token can't (`src/auth/api-token-grant.ts`). The token shows up in **Settings → API tokens** like
+any other and is revoked there.
+
 ### Connecting through Aegis (no token to paste)
 
 An app on Aegis (Simasis) can instead connect Missive with OAuth: it sends you to Aegis with

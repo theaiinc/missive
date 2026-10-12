@@ -16,6 +16,9 @@ const SESSION_ONLY = [/^\/api\/v1\/api-tokens(\/|$)/i, /^\/api\/v1\/admin(\/|$)/
 
 const SIGN_IN_REQUIRED = { error: "Sign in required", signIn: "/auth/login" };
 
+/** Pages a browser opens directly (api-token-grant.ts): signed out, sign in and come back instead of a 401. */
+const SIGN_IN_PAGES = [/^\/api\/v1\/api-tokens\/grant$/];
+
 /**
  * Every other request needs an Aegis session and runs as that user, which is
  * what scopes its database queries (see PostgresService.query).
@@ -112,6 +115,10 @@ export class AuthMiddleware implements NestMiddleware {
       user = await this.devUser;
     }
     if (!user) {
+      if (req.method === "GET" && SIGN_IN_PAGES.some((p) => p.test(path))) {
+        res.redirect(302, `/auth/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
+        return;
+      }
       res.status(401).json(SIGN_IN_REQUIRED);
       return;
     }
