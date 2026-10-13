@@ -47,3 +47,18 @@ export function useSenders(): Sender[] {
     .map((a) => ({ address: a.email, kind: "gmail", label: `${a.email} · Gmail` }));
   return [...hosted, ...viaGmail];
 }
+
+export type Signature = { address: string; text: string; source: "missive" | "gmail" | "none" };
+
+/** The signature for an address you send from (yours from Settings, else your Gmail one). */
+export function useSignature(address: string | undefined) {
+  return useQuery<Signature>({
+    queryKey: ["signature", address],
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/signatures?address=${encodeURIComponent(address!)}`);
+      return res.ok ? res.json() : { address: address!, text: "", source: "none" };
+    },
+    enabled: !!address,
+    staleTime: 10 * 60_000,
+  });
+}

@@ -1,10 +1,10 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useSenders } from "@/hooks/useMe";
+import { useSenders, useSignature } from "@/hooks/useMe";
 import { Loader2, Sparkles } from "lucide-react";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
@@ -42,14 +42,33 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   const [sending, setSending] = useState(false);
   const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
 
-  // "Write with AI": a reply's quote stays below whatever is written above it.
+  // What follows what you write: your signature for the From address, then a reply's quote.
   const quote = draft.replyTo ? (draft.text ?? "").replace(/^\s+/, "") : "";
+  const { data: signature } = useSignature(values.from);
+  const tailFor = (sig: string) => (sig ? `\n\n-- \n${sig}` : "") + (quote ? `\n\n${quote}` : "");
+  const tail = tailFor(signature?.text ?? "");
+  // Swap the signature in when it loads or the From address changes, unless the tail was edited.
+  const shownTail = useRef(quote ? `\n\n${quote}` : "");
+  useEffect(() => {
+    if (!signature) return;
+    const next = tailFor(signature.text);
+    setValues((v) => {
+      const prev = shownTail.current;
+      if (!v.text.endsWith(prev)) return v;
+      shownTail.current = next;
+      return { ...v, text: v.text.slice(0, v.text.length - prev.length) + next };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature?.text, signature?.address]);
+  const written = (text: string) => (text.endsWith(shownTail.current) ? text.slice(0, text.length - shownTail.current.length) : text);
+
+  // "Write with AI": writes above the signature and quote.
   const [instructions, setInstructions] = useState("");
   const [drafting, setDrafting] = useState(false);
   const writeWithAi = async () => {
     setDrafting(true);
     setError(null);
-    const above = quote && values.text.endsWith(quote) ? values.text.slice(0, -quote.length) : values.text;
+    const above = written(values.text);
     try {
       const res = await fetch("/api/v1/draft", {
         method: "POST",
@@ -61,6 +80,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
           subject: values.subject,
           current: above.trim() ? above : undefined,
           fromName: draft.fromName ?? mailboxes.find((m) => m.address === values.from)?.displayName,
+          hasSignature: !!signature?.text,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -69,8 +89,9 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
         ...v,
         // A reply keeps its "Re:" subject; a new email takes the suggested one when it has none.
         subject: draft.replyTo || v.subject.trim() ? v.subject : body.subject ?? v.subject,
-        text: quote ? `${body.text}\n\n${quote}` : body.text,
+        text: body.text + (v.text.endsWith(shownTail.current) ? shownTail.current : tail),
       }));
+      shownTail.current = shownTail.current && values.text.endsWith(shownTail.current) ? shownTail.current : tail;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -166,7 +187,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
                 disabled={drafting || sending || (!draft.replyTo && !instructions.trim())}
               >
                 {drafting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-                {drafting ? "Writing…" : values.text.trim() && values.text.trim() !== quote.trim() ? "Redraft" : "Draft"}
+                {drafting ? "Writing…" : written(values.text).trim() ? "Redraft" : "Draft"}
               </Button>
             </div>
           </div>

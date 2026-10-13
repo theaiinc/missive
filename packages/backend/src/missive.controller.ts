@@ -120,7 +120,7 @@ export class MissiveController {
    */
   @Post("draft")
   async draft(
-    @Body() body: { instructions?: string; replyTo?: string; to?: string; subject?: string; current?: string; fromName?: string }
+    @Body() body: { instructions?: string; replyTo?: string; to?: string; subject?: string; current?: string; fromName?: string; hasSignature?: boolean }
   ) {
     let thread: Awaited<ReturnType<MissiveService["getThreadMissives"]>> = [];
     if (body?.replyTo) {
@@ -140,6 +140,7 @@ export class MissiveController {
         to: str(body?.to),
         subject: str(body?.subject),
         current: str(body?.current),
+        hasSignature: body?.hasSignature === true,
         fromName: (str(body?.fromName) || requireUser().name || nameFromEmail(requireUser().email))?.slice(0, 120),
       });
     } catch (e) {

@@ -14,6 +14,7 @@ import { ImapSyncService } from "./imap-sync.service";
 import { SyncScheduler } from "./sync-scheduler";
 import { ConnectorStore } from "./connector.store";
 import { GmailSendService } from "./gmail-send.service";
+import { SignatureController, SignatureService } from "./signature.service";
 import { OrganizerService } from "./organizer.service";
 import { DigestController } from "./digest.controller";
 import { SystemEventService } from "./system-event.service";
@@ -36,8 +37,8 @@ import { ApiTokenGrantController } from "./auth/api-token-grant";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController],
-  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService, GmailSendService],
+  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController, SignatureController],
+  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService, GmailSendService, SignatureService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule implements NestModule {

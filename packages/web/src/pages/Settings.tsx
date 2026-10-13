@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { RefreshCw, Trash2, Plus, Loader2, KeyRound, AlertCircle, Bell, Copy } from "lucide-react";
 import type { ApiToken, CreatedApiToken } from "@theaiinc/missive-core";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/push";
-import { useMe } from "@/hooks/useMe";
+import { useMe, useSenders, useSignature } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors, colorOptions } from "@/hooks/useAccountColors";
 import { useEntityConfig, ConfigItem } from "@/hooks/useEntityConfig";
@@ -1122,6 +1122,7 @@ export function Settings() {
         <Separator />
 
         <PushNotifications />
+        <Signatures />
 
         <Separator />
 
@@ -1216,6 +1217,69 @@ function PushNotifications() {
         )}
       </Card>
     </section>
+  );
+}
+
+/** One signature per address you send from; a Gmail account starts from its Gmail signature. */
+function Signatures() {
+  const senders = useSenders();
+  if (!senders.length) return null;
+  return (
+    <section>
+      <h3 className="text-sm font-medium text-foreground mb-4">Signatures</h3>
+      <div className="space-y-3">
+        {senders.map((s) => (
+          <SignatureCard key={s.address} address={s.address} label={s.label} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SignatureCard({ address, label }: { address: string; label: string }) {
+  const queryClient = useQueryClient();
+  const { data } = useSignature(address);
+  const [text, setText] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const value = text ?? data?.text ?? "";
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/v1/signatures", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, text: value }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Not saved (${res.status})`);
+      queryClient.setQueryData(["signature", address], await res.json());
+      setText(null);
+      toast.success(`Signature saved for ${address}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Card className="p-4 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium text-foreground truncate">{label}</p>
+        {data?.source === "gmail" && text === null && <Badge variant="secondary" className="text-[10px]">From Gmail</Badge>}
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => setText(e.target.value)}
+        rows={4}
+        placeholder={data ? "No signature" : "Loading…"}
+        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <div className="flex justify-end">
+        <Button size="sm" disabled={saving || text === null} onClick={save}>
+          {saving && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+          Save
+        </Button>
+      </div>
+    </Card>
   );
 }
 
