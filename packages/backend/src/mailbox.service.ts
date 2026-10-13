@@ -11,6 +11,7 @@ import { GroupsService } from "./groups.service";
 import { requireUser } from "./request-context";
 import { CalendarService } from "./calendar/calendar.service";
 import { safeError } from "./log-safe";
+import { fromParsed } from "./addresses";
 
 /**
  * Mailboxes Missive hosts itself (address@custom-domain), like Gmail does.
@@ -131,6 +132,7 @@ export class MailboxService {
       bodyHtml: html,
       from,
       to: addresses(parsed.to).length ? addresses(parsed.to) : [{ address: mailbox.address }],
+      replyTo: fromParsed(parsed.replyTo),
       cc: addresses(parsed.cc),
       status: "unread",
       folder: "inbox",

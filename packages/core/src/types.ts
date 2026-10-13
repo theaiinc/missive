@@ -77,6 +77,15 @@ export const MissiveSchema = z.object({
       })
     )
     .optional(),
+  // Where replies should go when it isn't the sender (Reply-To), e.g. mail relayed through a group.
+  replyTo: z
+    .array(
+      z.object({
+        name: z.string().optional(),
+        address: z.string(),
+      })
+    )
+    .optional(),
   attachments: z
     .array(
       z.object({

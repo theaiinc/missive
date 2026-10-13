@@ -97,6 +97,21 @@ export function Inbox() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [orgFilter, setOrgFilter] = useState("");
+  // "Unread only", remembered on this device.
+  const [unreadOnly, setUnreadOnly] = useState(() => {
+    try {
+      return localStorage.getItem("missive.unreadOnly") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleUnread = () =>
+    setUnreadOnly((on) => {
+      try {
+        localStorage.setItem("missive.unreadOnly", on ? "0" : "1");
+      } catch {}
+      return !on;
+    });
   const [projectFilter, setProjectFilter] = useState("");
   const [semantic, setSemantic] = useState(false);
   const [semanticResult, setSemanticResult] = useState("");
@@ -238,7 +253,7 @@ export function Inbox() {
     hasNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-    queryKey: ["missives", folder, activeSearch, orgFilter, projectFilter],
+    queryKey: ["missives", folder, activeSearch, orgFilter, projectFilter, unreadOnly],
     queryFn: async ({ pageParam = 0 }) => {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
@@ -247,6 +262,7 @@ export function Inbox() {
       if (folder !== "all") params.set("folder", folder);
       if (activeSearch) params.set("query", activeSearch);
       if (orgFilter) params.set("organization", orgFilter);
+      if (unreadOnly) params.set("status", "unread");
       if (projectFilter) params.set("project", projectFilter);
       const res = await fetch(`/api/v1/search?${params}`);
       const json = await res.json();
@@ -479,6 +495,20 @@ export function Inbox() {
               {total > allMissives.length ? ` / ${total}` : ""}
             </span>
           )}
+
+          {/* Unread filter */}
+          <button
+            type="button"
+            onClick={toggleUnread}
+            aria-pressed={unreadOnly}
+            title={unreadOnly ? "Showing unread mail only" : "Show unread mail only"}
+            className={cn(
+              "text-xs rounded-md px-2 py-1 border shrink-0 transition-colors",
+              unreadOnly ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:text-foreground",
+            )}
+          >
+            Unread
+          </button>
 
           {/* Organization filter */}
           {allOrganizations.items.length > 0 && (
