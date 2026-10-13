@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import type { Missive, Thread } from "@theaiinc/missive-core";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, ImageOff, Reply } from "lucide-react";
+import { ArrowLeft, ImageOff, MailOpen, Reply } from "lucide-react";
 import { useCompose } from "@/components/Compose";
 import { useMe, useSenders } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
@@ -37,6 +37,35 @@ export function ThreadView() {
     queryFn: () => fetchThread(id!),
     enabled: !!id,
   });
+  const queryClient = useQueryClient();
+  const refreshCounts = () => {
+    void queryClient.invalidateQueries({ queryKey: ["folders"] });
+    void queryClient.invalidateQueries({ queryKey: ["missives"] });
+  };
+  // Opening a thread marks it read (here and in Gmail), so folder counts go down.
+  const markedRead = useRef<string | null>(null);
+  useEffect(() => {
+    if (!id || !data || markedRead.current === id) return;
+    markedRead.current = id;
+    if (!data.missives.some((m) => m.direction !== "outbound" && m.status === "unread")) return;
+    fetch(`/api/v1/thread/${encodeURIComponent(id)}/read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ read: true }),
+    })
+      .then(refreshCounts)
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, data]);
+  const markUnread = async () => {
+    await fetch(`/api/v1/thread/${encodeURIComponent(id!)}/read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ read: false }),
+    });
+    refreshCounts();
+    navigate(-1);
+  };
 
   if (isLoading) {
     return (
@@ -71,6 +100,10 @@ export function ThreadView() {
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back
+          </Button>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => void markUnread()} title="Mark as unread and go back">
+            <MailOpen className="w-4 h-4 mr-1" />
+            Mark as unread
           </Button>
         </div>
         <h2 className="text-lg font-semibold text-foreground">

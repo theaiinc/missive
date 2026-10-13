@@ -148,7 +148,8 @@ export class SyncService {
             to: toRaw.split(",").map((addr: string) => ({
               address: addr.trim(),
             })),
-            status: existing?.status ?? "unread",
+            // New mail takes Gmail's read state (read there already means read here).
+            status: existing?.status ?? (detail.data.labelIds?.includes("UNREAD") === false ? "read" : "unread"),
             accountEmail: connector.email,
             receivedAt: dateRaw
               ? new Date(dateRaw).toISOString()

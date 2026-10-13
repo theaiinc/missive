@@ -64,6 +64,35 @@ export class GmailSendService {
     return account && account.status !== "needs_reauth" ? account : undefined;
   }
 
+  /**
+   * Mirrors read/unread to Gmail (the UNREAD label), so Gmail and Missive agree.
+   * Best effort: Missive's own state is already saved.
+   */
+  async mirrorRead(changed: { provider: string; provider_message_id: string; account_email: string | null }[], read: boolean): Promise<void> {
+    const byAccount = new Map<string, string[]>();
+    for (const m of changed) {
+      if (m.provider !== "gmail" || !m.account_email) continue;
+      byAccount.set(m.account_email, [...(byAccount.get(m.account_email) ?? []), m.provider_message_id]);
+    }
+    for (const [email, ids] of byAccount) {
+      const account = await this.account(email);
+      if (!account) continue;
+      try {
+        const oauth2 = this.store.createOAuth2Client();
+        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(account.id) });
+        const gmail = google.gmail({ version: "v1", auth: oauth2 as never });
+        for (let i = 0; i < ids.length; i += 1000) {
+          await gmail.users.messages.batchModify({
+            userId: "me",
+            requestBody: { ids: ids.slice(i, i + 1000), ...(read ? { removeLabelIds: ["UNREAD"] } : { addLabelIds: ["UNREAD"] }) },
+          });
+        }
+      } catch {
+        // Gmail keeps its own state; the next read here tries again.
+      }
+    }
+  }
+
   /** A Gmail message's Reply-To, read from Gmail (for messages synced before it was stored). */
   async replyToOf(original: Missive): Promise<Address[]> {
     if (original.provider !== "gmail" || !original.accountEmail) return [];
