@@ -20,3 +20,30 @@ export function useMe() {
     staleTime: 5 * 60_000,
   });
 }
+
+/** An address you can send from: a hosted mailbox or group, or a connected Gmail account (sent through Gmail). */
+export type Sender = { address: string; label: string; kind: "mailbox" | "group" | "gmail"; displayName?: string };
+
+/** Everything the From menu offers, hosted mailboxes first. */
+export function useSenders(): Sender[] {
+  const { data: me } = useMe();
+  const { data: gmail } = useQuery<{ accounts: { email: string; needsReauth?: boolean }[] }>({
+    queryKey: ["gmail-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/v1/connector/gmail/status");
+      return res.ok ? res.json() : { accounts: [] };
+    },
+    staleTime: 5 * 60_000,
+  });
+  const hosted: Sender[] = (me?.mailboxes ?? []).filter(canSendAs).map((m) => ({
+    address: m.address,
+    displayName: m.displayName,
+    kind: m.kind === "group" ? "group" : "mailbox",
+    label: (m.displayName ? `${m.displayName} <${m.address}>` : m.address) + (m.kind === "group" ? " · group" : ""),
+  }));
+  const taken = new Set(hosted.map((s) => s.address));
+  const viaGmail: Sender[] = (gmail?.accounts ?? [])
+    .filter((a) => !a.needsReauth && !taken.has(a.email))
+    .map((a) => ({ address: a.email, kind: "gmail", label: `${a.email} · Gmail` }));
+  return [...hosted, ...viaGmail];
+}

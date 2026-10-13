@@ -41,6 +41,11 @@ const addresses = (value: AddressObject | AddressObject[] | undefined): Address[
 const toText = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+/** The HTML part of a message written as plain text: paragraphs, with line breaks kept. */
+export const textToHtml = (text: string) =>
+  `<div style="font:15px/1.6 -apple-system,Segoe UI,Inter,sans-serif">${text
+    .split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, "<br>")}</p>`).join("")}</div>`;
+
 @Injectable()
 export class MailboxService {
   private readonly logger = new Logger(MailboxService.name);
@@ -162,8 +167,7 @@ export class MailboxService {
       root = thread?.providerThreadId ?? inReplyTo;
     }
 
-    const html = `<div style="font:15px/1.6 -apple-system,Segoe UI,Inter,sans-serif">${mail.text
-      .split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, "<br>")}</p>`).join("")}</div>`;
+    const html = textToHtml(mail.text);
     const headers: Record<string, string> = {};
     if (inReplyTo) {
       headers["In-Reply-To"] = `<${inReplyTo}>`;

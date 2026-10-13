@@ -4,10 +4,11 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { canSendAs, useMe } from "@/hooks/useMe";
+import { useSenders } from "@/hooks/useMe";
+import { Loader2, Sparkles } from "lucide-react";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
-export type Draft = { from?: string; to?: string; cc?: string; subject?: string; text?: string; replyTo?: string };
+export type Draft = { from?: string; to?: string; cc?: string; subject?: string; text?: string; replyTo?: string; fromName?: string };
 
 const ComposeContext = createContext<(draft?: Draft) => void>(() => undefined);
 
@@ -28,9 +29,8 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
 const label = "text-xs font-medium text-muted-foreground";
 
 function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
-  const { data: me } = useMe();
   const queryClient = useQueryClient();
-  const mailboxes = (me?.mailboxes ?? []).filter(canSendAs);
+  const mailboxes = useSenders();
   const [values, setValues] = useState({
     from: draft.from ?? mailboxes[0]?.address ?? "",
     to: draft.to ?? "",
@@ -41,6 +41,42 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
+
+  // "Write with AI": a reply's quote stays below whatever is written above it.
+  const quote = draft.replyTo ? (draft.text ?? "").replace(/^\s+/, "") : "";
+  const [instructions, setInstructions] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const writeWithAi = async () => {
+    setDrafting(true);
+    setError(null);
+    const above = quote && values.text.endsWith(quote) ? values.text.slice(0, -quote.length) : values.text;
+    try {
+      const res = await fetch("/api/v1/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instructions,
+          replyTo: draft.replyTo,
+          to: values.to,
+          subject: values.subject,
+          current: above.trim() ? above : undefined,
+          fromName: draft.fromName ?? mailboxes.find((m) => m.address === values.from)?.displayName,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `Couldn't write a draft (${res.status})`);
+      setValues((v) => ({
+        ...v,
+        // A reply keeps its "Re:" subject; a new email takes the suggested one when it has none.
+        subject: draft.replyTo || v.subject.trim() ? v.subject : body.subject ?? v.subject,
+        text: quote ? `${body.text}\n\n${quote}` : body.text,
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDrafting(false);
+    }
+  };
 
   const send = async () => {
     setSending(true);
@@ -90,7 +126,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             >
               {mailboxes.map((m) => (
                 <option key={m.address} value={m.address}>
-                  {(m.displayName ? `${m.displayName} <${m.address}>` : m.address) + (m.kind === "group" ? " · group" : "")}
+                  {m.label}
                 </option>
               ))}
             </select>
@@ -107,6 +143,33 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             <span className={label}>Subject</span>
             <Input value={values.subject} onChange={set("subject")} required />
           </label>
+          <div className="grid gap-1">
+            <span className={label}>Write with AI</span>
+            <div className="flex gap-2">
+              <Input
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (!drafting && (draft.replyTo || instructions.trim())) void writeWithAi();
+                  }
+                }}
+                placeholder={draft.replyTo ? "What to say, e.g. \"accept, suggest Thursday 3pm\" (optional)" : "What it's about, e.g. \"ask An for the Q3 invoice, in Vietnamese\""}
+                autoComplete="off"
+                disabled={drafting}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void writeWithAi()}
+                disabled={drafting || sending || (!draft.replyTo && !instructions.trim())}
+              >
+                {drafting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                {drafting ? "Writing…" : values.text.trim() && values.text !== quote ? "Redraft" : "Draft"}
+              </Button>
+            </div>
+          </div>
           <label className="grid gap-1">
             <span className={label}>Message</span>
             <textarea
@@ -128,7 +191,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             <Button type="button" variant="ghost" onClick={onClose} disabled={sending}>
               Discard
             </Button>
-            <Button type="submit" disabled={sending || mailboxes.length === 0}>
+            <Button type="submit" disabled={sending || drafting || mailboxes.length === 0}>
               {sending ? "Sending…" : "Send"}
             </Button>
           </DialogFooter>

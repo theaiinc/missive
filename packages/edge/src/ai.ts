@@ -8,8 +8,8 @@ import { DurableObject } from "cloudflare:workers";
  * uses the rest), counted in the AiBudget Durable Object.
  */
 export const AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-/** Translating a message: multilingual, long context, and far cheaper than AI_MODEL. */
-export const TRANSLATE_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+/** Translating and drafting messages: multilingual, long context, and far cheaper than AI_MODEL. */
+export const WRITING_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 /**
  * The models the API may ask for, with neurons per token (a neuron is
  * $0.011 / 1,000) and the most output a request may ask for. Any other
@@ -20,7 +20,7 @@ const MODELS: Record<string, { input: number; output: number; maxOutput: number;
   [AI_MODEL]: { input: 26_668 / 1e6, output: 204_805 / 1e6, maxOutput: 2_048 },
   // $0.10 / $0.30 per million tokens; a long email's translation is long too
   // Thinking is on by default and spends the whole allowance before any answer.
-  [TRANSLATE_MODEL]: { input: 9_091 / 1e6, output: 27_273 / 1e6, maxOutput: 8_192, options: { chat_template_kwargs: { enable_thinking: false } } },
+  [WRITING_MODEL]: { input: 9_091 / 1e6, output: 27_273 / 1e6, maxOutput: 8_192, options: { chat_template_kwargs: { enable_thinking: false } } },
 };
 const DEFAULT_DAILY_NEURONS = 4_500;
 

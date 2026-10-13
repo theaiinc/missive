@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Reply } from "lucide-react";
 import { useCompose } from "@/components/Compose";
-import { canSendAs, useMe } from "@/hooks/useMe";
+import { useMe, useSenders } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
 import { TranslateBar, TranslatedBody, type Translation } from "@/components/Translate";
@@ -135,11 +135,14 @@ function EmailCard({ missive }: { missive: Missive }) {
   const { getColor } = useAccountColors();
   const compose = useCompose();
   const { data: me } = useMe();
-  // Replies go out from the hosted mailbox the message belongs to.
-  // Reply from the address it came to when you may send as it; a group you're
-  // only a member of gets the reply from your own mailbox.
-  const to = me?.mailboxes.find((m) => m.address === missive.accountEmail);
-  const mailbox = to && canSendAs(to) ? to : to ? me?.mailboxes.find((m) => m.kind !== "group") : undefined;
+  const senders = useSenders();
+  // Reply from the address it came to when you may send as it (a hosted
+  // mailbox, or a connected Gmail account, sent through Gmail); otherwise
+  // from your own mailbox, or the first address you can send from.
+  const mailbox =
+    senders.find((s) => s.address === missive.accountEmail) ??
+    senders.find((s) => s.kind === "mailbox") ??
+    senders[0];
   const reply = () => {
     const outbound = missive.direction === "outbound";
     const subject = missive.subject ?? "";
@@ -152,6 +155,7 @@ function EmailCard({ missive }: { missive: Missive }) {
         .map((l) => `> ${l}`)
         .join("\n")}`,
       replyTo: missive.id,
+      fromName: me?.name,
     });
   };
 

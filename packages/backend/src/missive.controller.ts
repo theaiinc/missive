@@ -13,7 +13,10 @@ import { SearchService } from "./search.service";
 import { OrganizerService } from "./organizer.service";
 import { StorageService } from "./storage/storage.service";
 import type { SearchQuery } from "@theaiinc/missive-core";
-import { LANGUAGES, TranslateError, translate } from "./translate";
+import { LANGUAGES, translate } from "./translate";
+import { draft } from "./draft";
+import { WritingError } from "./writing";
+import { requireUser } from "./request-context";
 
 @Controller("api/v1")
 export class MissiveController {
@@ -106,7 +109,41 @@ export class MissiveController {
     try {
       return await translate(missive, body?.to ?? "en");
     } catch (e) {
-      if (e instanceof TranslateError) throw new HttpException(e.message, e.status);
+      if (e instanceof WritingError) throw new HttpException(e.message, e.status);
+      throw e;
+    }
+  }
+
+  /**
+   * "Write with AI" in the compose window: a draft of a reply (with its
+   * thread, read as the signed-in user) or of a new email. Nothing is sent.
+   */
+  @Post("draft")
+  async draft(
+    @Body() body: { instructions?: string; replyTo?: string; to?: string; subject?: string; current?: string; fromName?: string }
+  ) {
+    let thread: Awaited<ReturnType<MissiveService["getThreadMissives"]>> = [];
+    if (body?.replyTo) {
+      const original = await this.missive.getMissive(body.replyTo);
+      if (!original) throw new NotFoundException("No such message");
+      thread = (await this.missive.getThreadMissives(original.threadId)).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+      // Up to the message being answered, which may not be the newest.
+      const at = thread.findIndex((m) => m.id === original.id);
+      if (at >= 0) thread = thread.slice(0, at + 1);
+      if (!thread.length) thread = [original];
+    }
+    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    try {
+      return await draft({
+        instructions: str(body?.instructions) ?? "",
+        thread,
+        to: str(body?.to),
+        subject: str(body?.subject),
+        current: str(body?.current),
+        fromName: (str(body?.fromName) || requireUser().name)?.slice(0, 120),
+      });
+    } catch (e) {
+      if (e instanceof WritingError) throw new HttpException(e.message, e.status);
       throw e;
     }
   }
