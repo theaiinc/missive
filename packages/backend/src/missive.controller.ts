@@ -110,6 +110,23 @@ export class MissiveController {
     return { to: replyRecipients(missive.from, replyTo) };
   }
 
+  /** Opening a thread marks it read; "Mark as unread" sends read: false. Mirrored to Gmail. */
+  @Post("thread/:id/read")
+  async markThreadRead(@Param("id") id: string, @Body() body: { read?: boolean }) {
+    const read = body?.read !== false;
+    const changed = await this.storage.setThreadRead(id, read);
+    if (changed.length) void this.gmail.mirrorRead(changed, read);
+    return { changed: changed.length };
+  }
+
+  /** "Mark all as read" for a folder. */
+  @Post("folder/:slug/read-all")
+  async markFolderRead(@Param("slug") slug: string) {
+    const changed = await this.storage.markFolderRead(slug);
+    if (changed.length) void this.gmail.mirrorRead(changed, true);
+    return { changed: changed.length };
+  }
+
   @Get("translate/languages")
   languages() {
     return Object.entries(LANGUAGES).map(([code, name]) => ({ code, name }));

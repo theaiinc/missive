@@ -1,4 +1,5 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Missive, Folder } from "@theaiinc/missive-core";
@@ -287,6 +288,15 @@ export function Inbox() {
     folders?.find((f) => f.slug === folder)?.name ??
     folder.charAt(0).toUpperCase() + folder.slice(1);
 
+  const queryClient = useQueryClient();
+  const markAllRead = async () => {
+    const res = await fetch(`/api/v1/folder/${encodeURIComponent(folder)}/read-all`, { method: "POST" });
+    const body = (await res.json().catch(() => ({}))) as { changed?: number };
+    if (res.ok) toast.success(body.changed ? `Marked ${body.changed} as read` : "Nothing unread here");
+    void queryClient.invalidateQueries({ queryKey: ["folders"] });
+    void queryClient.invalidateQueries({ queryKey: ["missives"] });
+  };
+
   const notifCtx = useNotificationContext();
   const { pushSystemMessage } = useChat();
 
@@ -496,6 +506,18 @@ export function Inbox() {
             </span>
           )}
 
+          {/* Mark all as read */}
+          {folder !== "all" && folder !== "sent" && (
+            <button
+              type="button"
+              onClick={() => void markAllRead()}
+              title={`Mark everything in ${folderName} as read`}
+              className="text-xs rounded-md px-2 py-1 border shrink-0 bg-background text-muted-foreground border-border hover:text-foreground"
+            >
+              Mark all read
+            </button>
+          )}
+
           {/* Unread filter */}
           <button
             type="button"
@@ -663,14 +685,27 @@ export function Inbox() {
                   </Avatar>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground truncate">
+                      {missive.status === "unread" && missive.direction !== "outbound" && (
+                        <span className="w-2 h-2 rounded-full bg-primary shrink-0" aria-label="Unread" />
+                      )}
+                      <span
+                        className={cn(
+                          "text-sm text-foreground truncate",
+                          missive.status === "unread" && missive.direction !== "outbound" ? "font-semibold" : "font-medium",
+                        )}
+                      >
                         {missive.from.name ?? missive.from.address}
                       </span>
                       <Badge variant="secondary" className="hidden sm:inline-flex text-[10px] px-1.5 py-0 h-4">
                         {missive.channel}
                       </Badge>
                     </div>
-                    <p className="text-sm text-foreground mt-0.5 truncate">
+                    <p
+                      className={cn(
+                        "text-sm mt-0.5 truncate",
+                        missive.status === "unread" && missive.direction !== "outbound" ? "text-foreground font-semibold" : "text-muted-foreground",
+                      )}
+                    >
                       {missive.subject ?? "(no subject)"}
                     </p>
                     {missive.accountEmail && (

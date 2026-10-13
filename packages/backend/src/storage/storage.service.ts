@@ -263,7 +263,8 @@ export class StorageService {
 
   async listFolders(): Promise<(Folder & { missiveCount: number })[]> {
     const { rows } = await this.pg.query(
-      `SELECT f.*, COUNT(m.id)::int AS missive_count
+      // The sidebar shows how many are unread in each folder.
+      `SELECT f.*, COUNT(m.id) FILTER (WHERE m.status = 'unread')::int AS missive_count
        FROM folders f
        LEFT JOIN missives m ON m.folder = f.slug
        GROUP BY f.owner_id, f.id
@@ -285,6 +286,31 @@ export class StorageService {
       [data.slug, data.name, data.slug, data.icon ?? null, data.color ?? null],
     );
     return rowToFolder(rows[0]);
+  }
+
+  /**
+   * Marks a thread's messages read or unread; returns those that changed, with
+   * what's needed to mirror it to Gmail. Your own sent mail is always read.
+   */
+  async setThreadRead(threadId: string, read: boolean): Promise<{ id: string; provider: string; provider_message_id: string; account_email: string | null }[]> {
+    const { rows } = await this.pg.query(
+      `UPDATE missives SET status = $2, updated_at = NOW()
+        WHERE thread_id = $1 AND direction = 'inbound' AND status = $3
+        RETURNING id, provider, provider_message_id, account_email, owner_id`,
+      [threadId, read ? 'read' : 'unread', read ? 'unread' : 'read'],
+    );
+    return openRows('missives', rows);
+  }
+
+  /** Marks everything unread in a folder as read; returns those that changed. */
+  async markFolderRead(folder: string): Promise<{ id: string; provider: string; provider_message_id: string; account_email: string | null }[]> {
+    const { rows } = await this.pg.query(
+      `UPDATE missives SET status = 'read', updated_at = NOW()
+        WHERE folder = $1 AND status = 'unread'
+        RETURNING id, provider, provider_message_id, account_email, owner_id`,
+      [folder],
+    );
+    return openRows('missives', rows);
   }
 
   async moveMissive(id: string, folder: string): Promise<void> {
