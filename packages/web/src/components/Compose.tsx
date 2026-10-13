@@ -40,6 +40,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   });
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [readReceipt, setReadReceipt] = useState(false);
   const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
 
   // What follows what you write: your signature for the From address, then a reply's quote.
@@ -106,7 +107,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       const res = await fetch("/api/v1/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...values, replyTo: draft.replyTo }),
+        body: JSON.stringify({ ...values, replyTo: draft.replyTo, readReceipt }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message ?? body.error ?? `Not sent (${res.status})`);
@@ -202,6 +203,10 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
               onFocus={(e) => draft.replyTo && e.currentTarget.setSelectionRange(0, 0)}
               className="rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground" title="Asks their mail app to tell you when it's opened. Many apps ignore this, or ask the reader first.">
+            <input type="checkbox" checked={readReceipt} onChange={(e) => setReadReceipt(e.target.checked)} className="h-3.5 w-3.5" />
+            Request a read receipt
           </label>
           {error && (
             <p role="alert" className="text-sm text-destructive">

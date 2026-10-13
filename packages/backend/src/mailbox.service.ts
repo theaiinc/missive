@@ -28,6 +28,8 @@ export type OutgoingMail = {
   text: string;
   /** Missive id of the message being replied to. */
   replyTo?: string;
+  /** Ask for a read receipt (Disposition-Notification-To); many mail apps ignore it. */
+  readReceipt?: boolean;
 };
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 26);
@@ -169,6 +171,7 @@ export class MailboxService {
 
     const html = textToHtml(mail.text);
     const headers: Record<string, string> = {};
+    if (mail.readReceipt) headers["Disposition-Notification-To"] = mailbox.address;
     if (inReplyTo) {
       headers["In-Reply-To"] = `<${inReplyTo}>`;
       headers["References"] = root && root !== inReplyTo ? `<${root}> <${inReplyTo}>` : `<${inReplyTo}>`;

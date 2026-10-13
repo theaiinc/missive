@@ -2,6 +2,7 @@ import { Container } from "@cloudflare/containers";
 // Bundled from source (the Worker has no build step for core); same format as the backend.
 import { DataCipher } from "../../core/src/crypto";
 import { AI_MODEL, WRITING_MODEL, aiUsage, chatCompletions, type AiEnv } from "./ai";
+import { imageProxy } from "./image-proxy";
 
 export { AiBudget } from "./ai";
 
@@ -243,6 +244,8 @@ export default {
       if (url.pathname === "/internal/ai/usage" && request.method === "GET") return aiUsage(env);
     }
     if (url.pathname.startsWith("/internal/")) return json({ error: "Not found" }, 404);
+    // Remote images in mail, fetched for the reader (image-proxy.ts).
+    if (url.pathname === "/img" && request.method === "GET") return imageProxy(url, env.EDGE_SECRET);
     // /api/* and /auth/* go to the API; everything else is the web app
     // (run_worker_first in wrangler.jsonc sends only these paths here).
     if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) {
