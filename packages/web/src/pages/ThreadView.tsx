@@ -1,18 +1,19 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import type { Missive, Thread } from "@theaiinc/missive-core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, Reply } from "lucide-react";
+import { ArrowLeft, ImageOff, Reply } from "lucide-react";
 import { useCompose } from "@/components/Compose";
 import { useMe, useSenders } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
 import { TranslateBar, TranslatedBody, type Translation } from "@/components/Translate";
+import { remoteImageUrls, rewriteImages, signImageUrls } from "@/lib/emailImages";
 
 async function fetchThread(
   id: string
@@ -132,6 +133,39 @@ export function ThreadView() {
 function EmailCard({ missive }: { missive: Missive }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [translation, setTranslation] = useState<Translation | null>(null);
+
+  // Remote images stay hidden (no tracking pixels) until shown or the sender is trusted;
+  // shown ones load through Missive's proxy (lib/emailImages.ts).
+  const remote = useMemo(() => (missive.bodyHtml ? remoteImageUrls(missive.bodyHtml) : []), [missive.bodyHtml]);
+  const sender = missive.direction === "outbound" ? "" : missive.from.address;
+  const { data: trust, refetch: refetchTrust } = useQuery<{ trusted: boolean }>({
+    queryKey: ["image-trust", sender],
+    queryFn: () => fetch(`/api/v1/images/trusted?address=${encodeURIComponent(sender)}`).then((r) => (r.ok ? r.json() : { trusted: false })),
+    enabled: remote.length > 0 && !!sender,
+    staleTime: 5 * 60_000,
+  });
+  const [showImages, setShowImages] = useState(false);
+  // Your own messages show their images.
+  const wantImages = remote.length > 0 && (showImages || trust?.trusted === true || missive.direction === "outbound");
+  const { data: proxied, error: imageError } = useQuery<Record<string, string>>({
+    queryKey: ["image-links", missive.id],
+    queryFn: () => signImageUrls(remote),
+    enabled: wantImages,
+    staleTime: 60 * 60_000,
+  });
+  const bodyHtml = useMemo(
+    () => (missive.bodyHtml ? rewriteImages(missive.bodyHtml, wantImages && proxied ? proxied : null) : ""),
+    [missive.bodyHtml, wantImages, proxied],
+  );
+  const trustSender = async () => {
+    await fetch("/api/v1/images/trusted", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: sender, trusted: true }),
+    });
+    setShowImages(true);
+    void refetchTrust();
+  };
   const { getColor } = useAccountColors();
   const compose = useCompose();
   const { data: me } = useMe();
@@ -184,7 +218,7 @@ function EmailCard({ missive }: { missive: Missive }) {
     // Initial resize after a small delay to let the srcdoc render
     const initial = setTimeout(resizeIframe, 100);
     return () => clearTimeout(initial);
-  }, [missive.bodyHtml, resizeIframe]);
+  }, [bodyHtml, resizeIframe]);
 
   return (
     <div className="border border-border rounded-lg bg-card">
@@ -238,6 +272,24 @@ function EmailCard({ missive }: { missive: Missive }) {
       </div>
       <Separator />
       <TranslateBar missiveId={missive.id} translation={translation} onTranslation={setTranslation} />
+      {remote.length > 0 && !wantImages && !translation && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2 text-xs text-muted-foreground border-b border-border">
+          <ImageOff className="w-3.5 h-3.5 shrink-0" />
+          <span>Images are hidden, so the sender can't tell you opened this.</span>
+          <button type="button" className="text-primary hover:underline" onClick={() => setShowImages(true)}>
+            Show images
+          </button>
+          {sender && (
+            <>
+              <span aria-hidden>·</span>
+              <button type="button" className="text-primary hover:underline" onClick={() => void trustSender()}>
+                Always show from {sender}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {imageError && wantImages && <p className="px-4 py-2 text-xs text-destructive border-b border-border">{(imageError as Error).message}</p>}
       <div className="p-0">
         {translation ? (
           <TranslatedBody translation={translation} />
@@ -250,7 +302,7 @@ function EmailCard({ missive }: { missive: Missive }) {
             // that tab is an ordinary page, not sandboxed like the email.
             sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
             title="Email body"
-            srcDoc={wrapEmailHtml(missive.bodyHtml)}
+            srcDoc={wrapEmailHtml(bodyHtml)}
             onLoad={onIframeLoad}
           />
         ) : (
@@ -292,6 +344,7 @@ function wrapEmailHtml(html: string): string {
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; font-src data:">
 <meta name="color-scheme" content="light dark">
 <meta name="supported-color-schemes" content="light dark only">
 <style>

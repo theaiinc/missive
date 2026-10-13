@@ -13,6 +13,7 @@ export interface GmailOutgoing {
   text: string;
   html: string;
   replyTo?: string;
+  readReceipt?: boolean;
 }
 
 export class GmailSendError extends Error {}
@@ -34,6 +35,7 @@ export function buildMime(m: GmailOutgoing & { fromName?: string; inReplyTo?: st
     `Subject: ${encodeHeader(m.subject.replace(/[\r\n]+/g, " "))}`,
     ...(m.inReplyTo ? [`In-Reply-To: ${m.inReplyTo}`] : []),
     ...(m.references ? [`References: ${m.references}`] : []),
+    ...(m.readReceipt ? [`Disposition-Notification-To: ${m.from}`] : []),
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];

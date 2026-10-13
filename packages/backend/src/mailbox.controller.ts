@@ -124,6 +124,7 @@ export class MailboxController {
           text,
           html: textToHtml(text),
           replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
+          readReceipt: body.readReceipt === true,
         });
         return { id: missive.id, threadId: missive.threadId };
       } catch (error) {
@@ -139,6 +140,7 @@ export class MailboxController {
         subject,
         text,
         replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
+        readReceipt: body.readReceipt === true,
       });
       return { id: missive.id, threadId: missive.threadId };
     } catch (error) {

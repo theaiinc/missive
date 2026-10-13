@@ -76,3 +76,20 @@ describe("gmail send", () => {
     expect(String(parsed.html)).toContain("Được nhé");
   });
 });
+
+describe("read receipts and images", () => {
+  it("asks for a read receipt only when told to", async () => {
+    const base = { from: "steve@example.com", to: ["an@example.com"], subject: "Hi", text: "x", html: "<p>x</p>" };
+    expect(buildMime(base)).not.toContain("Disposition-Notification-To");
+    expect(buildMime({ ...base, readReceipt: true })).toContain("Disposition-Notification-To: steve@example.com");
+  });
+
+  it("signs image links the edge can check, and only http(s) ones", async () => {
+    const { signImageUrl } = await import("./images");
+    const { createHmac } = await import("node:crypto");
+    const link = new URL(signImageUrl("https://t.example/p.gif?id=1", "s".repeat(40), Date.UTC(2026, 9, 13, 10, 20)), "https://m.example");
+    const e = link.searchParams.get("e")!;
+    expect(Number(e) % 3600).toBe(0);
+    expect(link.searchParams.get("s")).toBe(createHmac("sha256", "s".repeat(40)).update(`https://t.example/p.gif?id=1|${e}`).digest("hex"));
+  });
+});
