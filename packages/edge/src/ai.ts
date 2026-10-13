@@ -15,11 +15,12 @@ export const TRANSLATE_MODEL = "@cf/google/gemma-4-26b-a4b-it";
  * $0.011 / 1,000) and the most output a request may ask for. Any other
  * model name gets AI_MODEL.
  */
-const MODELS: Record<string, { input: number; output: number; maxOutput: number }> = {
+const MODELS: Record<string, { input: number; output: number; maxOutput: number; options?: Record<string, unknown> }> = {
   // $0.293 / $2.253 per million tokens
   [AI_MODEL]: { input: 26_668 / 1e6, output: 204_805 / 1e6, maxOutput: 2_048 },
   // $0.10 / $0.30 per million tokens; a long email's translation is long too
-  [TRANSLATE_MODEL]: { input: 9_091 / 1e6, output: 27_273 / 1e6, maxOutput: 8_192 },
+  // Thinking is on by default and spends the whole allowance before any answer.
+  [TRANSLATE_MODEL]: { input: 9_091 / 1e6, output: 27_273 / 1e6, maxOutput: 8_192, options: { chat_template_kwargs: { enable_thinking: false } } },
 };
 const DEFAULT_DAILY_NEURONS = 4_500;
 
@@ -90,6 +91,7 @@ export async function chatCompletions(request: Request, env: AiEnv): Promise<Res
   }
   const promptChars = messages.reduce((n, m) => n + m.content.length, 0);
   const input = {
+    ...MODELS[model]!.options,
     messages,
     max_tokens: Math.min(Math.max(1, Math.round(body?.max_tokens ?? 1024)), MODELS[model].maxOutput),
     ...(typeof body?.temperature === "number" ? { temperature: body.temperature } : {}),
