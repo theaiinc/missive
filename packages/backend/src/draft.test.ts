@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { simpleParser } from "mailparser";
-import { draft, MAX_THREAD_CHARS, threadContext } from "./draft";
+import { draft, MAX_THREAD_CHARS, nameFromEmail, threadContext } from "./draft";
 import { buildMime } from "./gmail-send.service";
 
 afterEach(() => {
@@ -41,6 +41,11 @@ describe("draft", () => {
     expect(sent.messages[0].content).toContain("reply");
     expect(sent.messages[1].content).toContain("Họp tuần này được không?");
     expect(sent.messages[1].content).toContain("<instructions>accept, Thursday 3pm</instructions>");
+  });
+
+  it("names the sender from their address when the account has no name", () => {
+    expect(nameFromEmail("steve.tran@theaiinc.com")).toBe("Steve Tran");
+    expect(nameFromEmail("an_nguyen2@x.com")).toBe("An Nguyen");
   });
 
   it("needs an instruction for a new email", async () => {

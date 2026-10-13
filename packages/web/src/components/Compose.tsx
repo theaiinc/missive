@@ -166,7 +166,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
                 disabled={drafting || sending || (!draft.replyTo && !instructions.trim())}
               >
                 {drafting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-                {drafting ? "Writing…" : values.text.trim() && values.text !== quote ? "Redraft" : "Draft"}
+                {drafting ? "Writing…" : values.text.trim() && values.text.trim() !== quote.trim() ? "Redraft" : "Draft"}
               </Button>
             </div>
           </div>

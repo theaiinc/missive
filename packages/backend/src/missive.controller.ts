@@ -14,7 +14,7 @@ import { OrganizerService } from "./organizer.service";
 import { StorageService } from "./storage/storage.service";
 import type { SearchQuery } from "@theaiinc/missive-core";
 import { LANGUAGES, translate } from "./translate";
-import { draft } from "./draft";
+import { draft, nameFromEmail } from "./draft";
 import { WritingError } from "./writing";
 import { requireUser } from "./request-context";
 
@@ -140,7 +140,7 @@ export class MissiveController {
         to: str(body?.to),
         subject: str(body?.subject),
         current: str(body?.current),
-        fromName: (str(body?.fromName) || requireUser().name)?.slice(0, 120),
+        fromName: (str(body?.fromName) || requireUser().name || nameFromEmail(requireUser().email))?.slice(0, 120),
       });
     } catch (e) {
       if (e instanceof WritingError) throw new HttpException(e.message, e.status);
