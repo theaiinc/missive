@@ -10,6 +10,7 @@ export interface GmailOutgoing {
   from: string;
   to: string[];
   cc?: string[];
+  bcc?: string[];
   subject: string;
   text: string;
   html: string;
@@ -33,6 +34,8 @@ export function buildMime(m: GmailOutgoing & { fromName?: string; inReplyTo?: st
     `From: ${from}`,
     `To: ${m.to.join(", ")}`,
     ...(m.cc?.length ? [`Cc: ${m.cc.join(", ")}`] : []),
+    // Gmail delivers to Bcc and drops the header from what recipients get; your sent copy keeps it.
+    ...(m.bcc?.length ? [`Bcc: ${m.bcc.join(", ")}`] : []),
     `Subject: ${encodeHeader(m.subject.replace(/[\r\n]+/g, " "))}`,
     ...(m.inReplyTo ? [`In-Reply-To: ${m.inReplyTo}`] : []),
     ...(m.references ? [`References: ${m.references}`] : []),
@@ -169,6 +172,7 @@ export class GmailSendService {
       from: { address: account.email, name: user.name },
       to: mail.to.map((address) => ({ address })),
       cc: (mail.cc ?? []).map((address) => ({ address })),
+      bcc: (mail.bcc ?? []).map((address) => ({ address })),
       status: "read",
       folder: "sent",
       accountEmail: account.email,

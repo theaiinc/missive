@@ -279,6 +279,7 @@ function EmailCard({ missive }: { missive: Missive }) {
             <p className="text-xs text-muted-foreground">
               {new Date(missive.receivedAt).toLocaleString()}
             </p>
+            <Recipients missive={missive} />
             {missive.accountEmail && (
               <div className="mt-0.5">
                 <span
@@ -352,6 +353,39 @@ function EmailCard({ missive }: { missive: Missive }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+type Person = { name?: string; address: string };
+const who = (p: Person) => (p.name ? `${p.name} <${p.address}>` : p.address);
+
+/** To, Cc and (on your own sent mail) Bcc, one line each; long lists fold behind "+N more". */
+function Recipients({ missive }: { missive: Missive }) {
+  const [open, setOpen] = useState(false);
+  const rows: [string, Person[]][] = [
+    ["To", missive.to ?? []],
+    ["Cc", missive.cc ?? []],
+    // Only your own copy of a sent message knows its Bcc.
+    ["Bcc", missive.direction === "outbound" ? missive.bcc ?? [] : []],
+  ];
+  const shown = rows.filter(([, list]) => list.length);
+  if (!shown.length) return null;
+  return (
+    <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+      {shown.map(([label, list]) => {
+        const visible = open ? list : list.slice(0, 3);
+        return (
+          <p key={label} className="break-words">
+            <span className="font-medium text-foreground/80">{label}:</span> {visible.map(who).join(", ")}
+            {!open && list.length > 3 && (
+              <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setOpen(true)}>
+                +{list.length - 3} more
+              </button>
+            )}
+          </p>
+        );
+      })}
     </div>
   );
 }

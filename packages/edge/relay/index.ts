@@ -24,6 +24,7 @@ type SendRequest = {
   from: { email: string; name?: string };
   to: string[];
   cc?: string[];
+  bcc?: string[];
   subject: string;
   text: string;
   html?: string;
@@ -54,6 +55,7 @@ export default {
         from: mail.from.name ? { email: mail.from.email, name: mail.from.name } : mail.from.email,
         to: mail.to,
         ...(mail.cc?.length ? { cc: mail.cc } : {}),
+        ...(mail.bcc?.length ? { bcc: mail.bcc } : {}),
         subject: mail.subject,
         text: mail.text,
         ...(mail.html ? { html: mail.html } : {}),

@@ -102,14 +102,15 @@ export class MailboxController {
   async send(@Body() body: Record<string, unknown>) {
     const to = list(body.to);
     const cc = list(body.cc);
+    const bcc = list(body.bcc);
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
     const text = typeof body.text === "string" ? body.text : "";
     const problems: string[] = [];
     if (!validEmail(body.from)) problems.push("Choose a From address.");
     if (!to.length) problems.push("Add at least one recipient.");
-    const bad = [...to, ...cc].filter((a) => !validEmail(a));
+    const bad = [...to, ...cc, ...bcc].filter((a) => !validEmail(a));
     if (bad.length) problems.push(`Check these addresses: ${bad.join(", ")}.`);
-    if (to.length + cc.length > 50) problems.push("Send to 50 people or fewer at a time.");
+    if (to.length + cc.length + bcc.length > 50) problems.push("Send to 50 people or fewer at a time.");
     if (!subject) problems.push("Add a subject.");
     if (!text.trim()) problems.push("Write a message.");
     if (problems.length) throw new BadRequestException(problems.join(" "));
@@ -120,6 +121,7 @@ export class MailboxController {
           from: body.from as string,
           to,
           cc,
+          bcc,
           subject,
           text,
           html: textToHtml(text),
@@ -137,6 +139,7 @@ export class MailboxController {
         from: body.from as string,
         to,
         cc,
+        bcc,
         subject,
         text,
         replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,

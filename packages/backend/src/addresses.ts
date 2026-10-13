@@ -53,3 +53,10 @@ export function replyRecipients(from: Address, replyTo: Address[] | undefined): 
   const others = (replyTo ?? []).filter((a) => a.address.toLowerCase() !== from.address.toLowerCase());
   return others.length ? others : [from];
 }
+
+/** Microsoft Graph recipients ({ emailAddress: { address, name } }), as addresses. */
+export function graphAddresses(list: { emailAddress?: { address?: string; name?: string } }[] | undefined): Address[] {
+  return (list ?? [])
+    .map((r) => ({ address: (r.emailAddress?.address ?? "").toLowerCase(), ...(r.emailAddress?.name ? { name: r.emailAddress.name } : {}) }))
+    .filter((r) => r.address.includes("@"));
+}
