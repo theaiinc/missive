@@ -177,12 +177,20 @@ function EmailCard({ missive }: { missive: Missive }) {
     senders.find((s) => s.address === missive.accountEmail) ??
     senders.find((s) => s.kind === "mailbox") ??
     senders[0];
-  const reply = () => {
+  const reply = async () => {
     const outbound = missive.direction === "outbound";
     const subject = missive.subject ?? "";
+    // Mail relayed through a group (e.g. "X via info") names the person to answer in Reply-To.
+    let to = outbound ? missive.to.map((t) => t.address).join(", ") : missive.from.address;
+    if (!outbound) {
+      try {
+        const res = await fetch(`/api/v1/missive/${encodeURIComponent(missive.id)}/reply-recipients`);
+        if (res.ok) to = ((await res.json()) as { to: { address: string }[] }).to.map((a) => a.address).join(", ") || to;
+      } catch {}
+    }
     compose({
       from: mailbox!.address,
-      to: outbound ? missive.to.map((t) => t.address).join(", ") : missive.from.address,
+      to,
       subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
       text: `\n\nOn ${new Date(missive.receivedAt).toLocaleString()}, ${missive.from.name ?? missive.from.address} wrote:\n${missive.body
         .split("\n")
@@ -255,7 +263,7 @@ function EmailCard({ missive }: { missive: Missive }) {
         </div>
         <div className="flex items-center gap-2">
           {mailbox && (
-            <Button variant="outline" size="sm" onClick={reply}>
+            <Button variant="outline" size="sm" onClick={() => void reply()}>
               <Reply className="w-3.5 h-3.5 mr-1.5" />
               Reply
             </Button>

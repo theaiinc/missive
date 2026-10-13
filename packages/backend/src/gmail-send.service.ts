@@ -4,6 +4,7 @@ import type { Missive } from "@theaiinc/missive-core";
 import { ConnectorStore } from "./connector.store";
 import { StorageService } from "./storage/storage.service";
 import { requireUser } from "./request-context";
+import { parseAddressList, type Address } from "./addresses";
 
 export interface GmailOutgoing {
   from: string;
@@ -61,6 +62,22 @@ export class GmailSendService {
   async account(address: string) {
     const account = await this.store.getByEmail("gmail", address.toLowerCase());
     return account && account.status !== "needs_reauth" ? account : undefined;
+  }
+
+  /** A Gmail message's Reply-To, read from Gmail (for messages synced before it was stored). */
+  async replyToOf(original: Missive): Promise<Address[]> {
+    if (original.provider !== "gmail" || !original.accountEmail) return [];
+    const account = await this.account(original.accountEmail);
+    if (!account) return [];
+    try {
+      const oauth2 = this.store.createOAuth2Client();
+      oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(account.id) });
+      const gmail = google.gmail({ version: "v1", auth: oauth2 as never });
+      const meta = await gmail.users.messages.get({ userId: "me", id: original.providerMessageId, format: "metadata", metadataHeaders: ["Reply-To"] });
+      return parseAddressList(meta.data.payload?.headers?.find((h) => h.name?.toLowerCase() === "reply-to")?.value);
+    } catch {
+      return [];
+    }
   }
 
   async send(mail: GmailOutgoing): Promise<Missive> {

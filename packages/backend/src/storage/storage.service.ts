@@ -79,10 +79,11 @@ export class StorageService {
       `INSERT INTO missives (
         id, thread_id, channel, direction, provider, provider_message_id,
         subject, body, body_html, sender_name, sender_address, recipients, status,
-        classification, account_email, folder, received_at, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())
+        classification, account_email, folder, received_at, reply_to, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW(),NOW())
       ON CONFLICT (owner_id, provider, provider_message_id) DO UPDATE SET
         body = EXCLUDED.body,
+        reply_to = COALESCE(EXCLUDED.reply_to, missives.reply_to),
         body_html = EXCLUDED.body_html,
         status = EXCLUDED.status,
         updated_at = NOW()`,
@@ -104,6 +105,7 @@ export class StorageService {
         await seal('missives', 'account_email', missive.accountEmail),
         missive.folder ?? 'inbox',
         missive.receivedAt,
+        missive.replyTo?.length ? await seal('missives', 'reply_to', JSON.stringify(missive.replyTo)) : null,
       ],
     );
   }
@@ -169,6 +171,11 @@ export class StorageService {
     if (query.folder) {
       conditions.push(`folder = $${idx}`);
       params.push(query.folder);
+      idx++;
+    }
+    if (query.status) {
+      conditions.push(`status = $${idx}`);
+      params.push(query.status);
       idx++;
     }
 
@@ -429,6 +436,17 @@ export class StorageService {
   }
 }
 
+/** Stored Reply-To: JSON text of addresses (null when the message had none). */
+function parseAddresses(value: unknown): Missive['replyTo'] {
+  if (typeof value !== 'string' || !value) return undefined;
+  try {
+    const list = JSON.parse(value);
+    return Array.isArray(list) && list.length ? list : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToMissive(row: any): Missive {
   return {
     id: row.id,
@@ -445,6 +463,7 @@ function rowToMissive(row: any): Missive {
       typeof row.recipients === 'string'
         ? JSON.parse(row.recipients)
         : row.recipients,
+    replyTo: parseAddresses(row.reply_to),
     status: row.status,
     classification: row.classification ?? undefined,
     folder: row.folder ?? 'inbox',

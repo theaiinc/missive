@@ -16,6 +16,8 @@ export interface SearchQuery {
   after?: string;
   before?: string;
   folder?: string;
+  /** Only messages with this status, e.g. "unread". */
+  status?: string;
   organization?: string;
   project?: string;
   limit?: number;

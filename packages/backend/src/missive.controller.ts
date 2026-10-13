@@ -17,6 +17,8 @@ import { LANGUAGES, translate } from "./translate";
 import { draft, nameFromEmail } from "./draft";
 import { WritingError } from "./writing";
 import { requireUser } from "./request-context";
+import { GmailSendService } from "./gmail-send.service";
+import { replyRecipients } from "./addresses";
 
 @Controller("api/v1")
 export class MissiveController {
@@ -24,7 +26,8 @@ export class MissiveController {
     private readonly missive: MissiveService,
     private readonly searchService: SearchService,
     private readonly organizer: OrganizerService,
-    private readonly storage: StorageService
+    private readonly storage: StorageService,
+    private readonly gmail: GmailSendService
   ) {}
 
   @Get("missive/:id")
@@ -64,6 +67,7 @@ export class MissiveController {
     @Query("after") after?: string,
     @Query("before") before?: string,
     @Query("folder") folder?: string,
+    @Query("status") status?: string,
     @Query("organization") organization?: string,
     @Query("project") project?: string,
     @Query("limit") limit?: string,
@@ -78,6 +82,7 @@ export class MissiveController {
       after,
       before,
       folder,
+      status: status === "unread" || status === "read" ? status : undefined,
       organization,
       project,
       limit: limit ? parseInt(limit, 10) : 50,
@@ -94,6 +99,15 @@ export class MissiveController {
   @Post("thread/:id/summarize")
   async summarize(@Param("id") id: string) {
     return this.missive.summarize(id);
+  }
+
+  /** Who a reply to this message goes to: its Reply-To (e.g. the person behind a group), else the sender. */
+  @Get("missive/:id/reply-recipients")
+  async replyRecipients(@Param("id") id: string) {
+    const missive = await this.missive.getMissive(id);
+    if (!missive) throw new NotFoundException("No such message");
+    const replyTo = missive.replyTo?.length ? missive.replyTo : await this.gmail.replyToOf(missive);
+    return { to: replyRecipients(missive.from, replyTo) };
   }
 
   @Get("translate/languages")

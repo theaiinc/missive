@@ -15,7 +15,7 @@ import { requireUser } from "../request-context";
  * already parse.
  */
 export const ENCRYPTED_COLUMNS = {
-  missives: ["subject", "body", "body_html", "sender_name", "sender_address", "recipients", "account_email", "summary"],
+  missives: ["subject", "body", "body_html", "sender_name", "sender_address", "recipients", "account_email", "summary", "reply_to"],
   threads: ["subject"],
   digests: ["summary", "items"],
   // Rule conditions quote addresses and subjects the user typed.

@@ -93,3 +93,22 @@ describe("read receipts and images", () => {
     expect(link.searchParams.get("s")).toBe(createHmac("sha256", "s".repeat(40)).update(`https://t.example/p.gif?id=1|${e}`).digest("hex"));
   });
 });
+
+describe("reply recipients", () => {
+  it("reads Reply-To headers, quoted names with commas included", async () => {
+    const { parseAddressList } = await import("./addresses");
+    expect(parseAddressList('"Yao, Zhiheng" <Yao@Volc.example>, b@x.com, not-an-address')).toEqual([
+      { address: "yao@volc.example", name: "Yao, Zhiheng" },
+      { address: "b@x.com" },
+    ]);
+    expect(parseAddressList(undefined)).toEqual([]);
+  });
+
+  it("answers the Reply-To when it differs from the sender, else the sender", async () => {
+    const { replyRecipients } = await import("./addresses");
+    const group = { address: "info@theaiinc.com", name: "via info" };
+    expect(replyRecipients(group, [{ address: "yao@volc.example" }])).toEqual([{ address: "yao@volc.example" }]);
+    expect(replyRecipients(group, [{ address: "INFO@theaiinc.com" }])).toEqual([group]);
+    expect(replyRecipients(group, undefined)).toEqual([group]);
+  });
+});

@@ -7,6 +7,7 @@ import { StorageService } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive } from "@theaiinc/missive-core";
+import { fromParsed } from "./addresses";
 
 export interface ImapConfig {
   host: string;
@@ -233,6 +234,7 @@ export class ImapSyncService {
               name: fromName,
               address: fromAddress,
             },
+            replyTo: fromParsed(parsed.replyTo),
             to: toList,
             status: existing?.status ?? "unread",
             accountEmail: connector.email,
