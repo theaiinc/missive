@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { Mail, Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck, ShieldAlert, CalendarDays, Menu, X, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck, ShieldAlert, CalendarDays, Menu, X, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -161,9 +161,7 @@ function LayoutShell() {
             title="Missive"
             aria-label="Missive inbox"
           >
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-              <Mail className="w-4 h-4 text-primary-foreground" />
-            </div>
+            <img src="/missive.svg" alt="" className="w-8 h-8 shrink-0" />
             <span className="text-sm font-semibold text-foreground truncate">Missive</span>
           </button>
           )}
@@ -367,7 +365,7 @@ function LayoutShell() {
           <button onClick={() => setMenuOpen((o) => !o)} className="p-2 text-muted-foreground hover:text-foreground" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="sidebar">
             {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
-          <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center"><Mail className="w-3.5 h-3.5 text-primary-foreground" /></div>
+          <img src="/missive.svg" alt="" className="w-6 h-6" />
           <span className="text-sm font-semibold">Missive</span>
         </div>
         {/* Organizer activity indicator */}
