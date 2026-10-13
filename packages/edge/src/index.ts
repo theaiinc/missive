@@ -1,7 +1,7 @@
 import { Container } from "@cloudflare/containers";
 // Bundled from source (the Worker has no build step for core); same format as the backend.
 import { DataCipher } from "../../core/src/crypto";
-import { AI_MODEL, aiUsage, chatCompletions, type AiEnv } from "./ai";
+import { AI_MODEL, TRANSLATE_MODEL, aiUsage, chatCompletions, type AiEnv } from "./ai";
 
 export { AiBudget } from "./ai";
 
@@ -139,6 +139,7 @@ export class MissiveApi extends Container<Env> {
       // The organizer and chat assistant use Workers AI through this Worker (ai.ts).
       LM_STUDIO_BASE_URL: `${env.APP_URL}/internal/ai/v1`,
       LM_STUDIO_MODEL: AI_MODEL,
+      LM_STUDIO_TRANSLATE_MODEL: TRANSLATE_MODEL,
       LLM_API_KEY: env.EDGE_SECRET,
       ORGANIZER_SINCE: env.ORGANIZER_SINCE ?? "",
       // Connected Gmail/Outlook/IMAP accounts sync every 5 minutes (kept awake by the cron below).

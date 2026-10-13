@@ -2,17 +2,26 @@ import { DurableObject } from "cloudflare:workers";
 
 /**
  * The API's language model: an OpenAI-compatible /chat/completions backed by
- * Workers AI, for the organizer and the chat assistant. Only the API may call
+ * Workers AI, for the organizer, the chat assistant and translating a message. Only the API may call
  * it (EDGE_SECRET), and it keeps to a daily share of the Cloudflare account's
  * free 10,000 neurons (AI_DAILY_NEURONS, 4,500 by default; Bugmole's Scents
  * uses the rest), counted in the AiBudget Durable Object.
  */
 export const AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-/** Neurons per token for AI_MODEL ($0.293 / $2.253 per million tokens). */
-const PER_INPUT_TOKEN = 26_668 / 1e6;
-const PER_OUTPUT_TOKEN = 204_805 / 1e6;
+/** Translating a message: multilingual, long context, and far cheaper than AI_MODEL. */
+export const TRANSLATE_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+/**
+ * The models the API may ask for, with neurons per token (a neuron is
+ * $0.011 / 1,000) and the most output a request may ask for. Any other
+ * model name gets AI_MODEL.
+ */
+const MODELS: Record<string, { input: number; output: number; maxOutput: number }> = {
+  // $0.293 / $2.253 per million tokens
+  [AI_MODEL]: { input: 26_668 / 1e6, output: 204_805 / 1e6, maxOutput: 2_048 },
+  // $0.10 / $0.30 per million tokens; a long email's translation is long too
+  [TRANSLATE_MODEL]: { input: 9_091 / 1e6, output: 27_273 / 1e6, maxOutput: 8_192 },
+};
 const DEFAULT_DAILY_NEURONS = 4_500;
-const MAX_OUTPUT_TOKENS = 2_048;
 
 export interface AiEnv {
   AI: Ai;
@@ -25,9 +34,16 @@ type Message = { role: string; content: string };
 
 const day = () => new Date().toISOString().slice(0, 10);
 
-export function neurons(usage: Usage | undefined, promptChars: number, answerChars: number): number {
+export function neurons(usage: Usage | undefined, promptChars: number, answerChars: number, model = AI_MODEL): number {
+  const price = MODELS[model] ?? MODELS[AI_MODEL];
   // Without a usage report, estimate about four characters a token.
-  return (usage?.prompt_tokens ?? promptChars / 4) * PER_INPUT_TOKEN + (usage?.completion_tokens ?? answerChars / 4) * PER_OUTPUT_TOKEN;
+  return (usage?.prompt_tokens ?? promptChars / 4) * price.input + (usage?.completion_tokens ?? answerChars / 4) * price.output;
+}
+
+/** The answer's text: older models give `response`, newer ones OpenAI-style `choices`. */
+export function answerText(out: { response?: unknown; choices?: { message?: { content?: unknown } }[] }): string {
+  const content = out.choices?.[0]?.message?.content ?? out.response;
+  return typeof content === "string" ? content : content == null ? "" : JSON.stringify(content);
 }
 
 /** Today's spending, one counter per UTC day. */
@@ -61,8 +77,9 @@ export async function aiUsage(env: AiEnv): Promise<Response> {
 
 export async function chatCompletions(request: Request, env: AiEnv): Promise<Response> {
   const body = (await request.json().catch(() => null)) as
-    | { messages?: Message[]; stream?: boolean; temperature?: number; max_tokens?: number }
+    | { model?: string; messages?: Message[]; stream?: boolean; temperature?: number; max_tokens?: number }
     | null;
+  const model = body?.model && MODELS[body.model] ? body.model : AI_MODEL;
   const messages = (body?.messages ?? []).filter((m) => m && typeof m.content === "string").map((m) => ({ role: m.role, content: m.content }));
   if (!messages.length) return json({ error: { message: "messages is required" } }, 400);
 
@@ -74,23 +91,23 @@ export async function chatCompletions(request: Request, env: AiEnv): Promise<Res
   const promptChars = messages.reduce((n, m) => n + m.content.length, 0);
   const input = {
     messages,
-    max_tokens: Math.min(Math.max(1, Math.round(body?.max_tokens ?? 1024)), MAX_OUTPUT_TOKENS),
+    max_tokens: Math.min(Math.max(1, Math.round(body?.max_tokens ?? 1024)), MODELS[model].maxOutput),
     ...(typeof body?.temperature === "number" ? { temperature: body.temperature } : {}),
   };
   const id = `chatcmpl-${crypto.randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
 
   if (!body?.stream) {
-    let out: { response?: unknown; usage?: Usage };
+    let out: Parameters<typeof answerText>[0] & { usage?: Usage };
     try {
-      out = (await env.AI.run(AI_MODEL as never, input as never)) as typeof out;
+      out = (await env.AI.run(model as never, input as never)) as typeof out;
     } catch (e) {
       return json({ error: { message: e instanceof Error ? e.message : String(e) } }, 502);
     }
-    const content = typeof out.response === "string" ? out.response : out.response == null ? "" : JSON.stringify(out.response);
-    await budget(env).spend(neurons(out.usage, promptChars, content.length));
+    const content = answerText(out);
+    await budget(env).spend(neurons(out.usage, promptChars, content.length, model));
     return json({
-      id, object: "chat.completion", created, model: AI_MODEL,
+      id, object: "chat.completion", created, model,
       choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
       usage: out.usage ?? null,
     });
@@ -100,7 +117,7 @@ export async function chatCompletions(request: Request, env: AiEnv): Promise<Res
   // them as OpenAI chunks, and count what was used once the stream ends.
   let stream: ReadableStream<Uint8Array>;
   try {
-    stream = (await env.AI.run(AI_MODEL as never, { ...input, stream: true } as never)) as ReadableStream<Uint8Array>;
+    stream = (await env.AI.run(model as never, { ...input, stream: true } as never)) as ReadableStream<Uint8Array>;
   } catch (e) {
     return json({ error: { message: e instanceof Error ? e.message : String(e) } }, 502);
   }
@@ -110,7 +127,7 @@ export async function chatCompletions(request: Request, env: AiEnv): Promise<Res
   let answerChars = 0;
   let usage: Usage | undefined;
   const chunk = (delta: Record<string, string>, finish: string | null = null) =>
-    enc.encode(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model: AI_MODEL, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+    enc.encode(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
   const reshape = new TransformStream<Uint8Array, Uint8Array>({
     start(controller) {
       controller.enqueue(chunk({ role: "assistant" }));
@@ -137,7 +154,7 @@ export async function chatCompletions(request: Request, env: AiEnv): Promise<Res
     async flush(controller) {
       controller.enqueue(chunk({}, "stop"));
       controller.enqueue(enc.encode("data: [DONE]\n\n"));
-      await budget(env).spend(neurons(usage, promptChars, answerChars));
+      await budget(env).spend(neurons(usage, promptChars, answerChars, model));
     },
   });
   return new Response(stream.pipeThrough(reshape), {
