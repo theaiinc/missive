@@ -6,7 +6,7 @@ import { StorageService } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive } from "@theaiinc/missive-core";
-import { parseAddressList } from "./addresses";
+import { graphAddresses, parseAddressList } from "./addresses";
 
 /**
  * A sync result for an account the provider no longer lets us in to.
@@ -145,6 +145,8 @@ export class SyncService {
               address: fromMatch?.[2] ?? fromRaw,
             },
             replyTo: parseAddressList(header("Reply-To")),
+            cc: parseAddressList(header("Cc")),
+            bcc: parseAddressList(header("Bcc")),
             to: toRaw.split(",").map((addr: string) => ({
               address: addr.trim(),
             })),
@@ -310,6 +312,8 @@ export class SyncService {
                 ...(r.emailAddress?.name ? { name: r.emailAddress.name } : {}),
               }))
               .filter((r: { address: string }) => r.address.includes("@")),
+            cc: graphAddresses(msg.ccRecipients),
+            bcc: graphAddresses(msg.bccRecipients),
             to: toRaw
               ? toRaw.split(",").map((addr: string) => ({ address: addr.trim() }))
               : [],

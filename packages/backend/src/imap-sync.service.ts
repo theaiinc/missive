@@ -235,6 +235,8 @@ export class ImapSyncService {
               address: fromAddress,
             },
             replyTo: fromParsed(parsed.replyTo),
+            cc: fromParsed(parsed.cc),
+            bcc: fromParsed(parsed.bcc),
             to: toList,
             status: existing?.status ?? "unread",
             accountEmail: connector.email,

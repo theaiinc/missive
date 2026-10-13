@@ -79,11 +79,13 @@ export class StorageService {
       `INSERT INTO missives (
         id, thread_id, channel, direction, provider, provider_message_id,
         subject, body, body_html, sender_name, sender_address, recipients, status,
-        classification, account_email, folder, received_at, reply_to, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW(),NOW())
+        classification, account_email, folder, received_at, reply_to, cc_list, bcc_list, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW(),NOW())
       ON CONFLICT (owner_id, provider, provider_message_id) DO UPDATE SET
         body = EXCLUDED.body,
         reply_to = COALESCE(EXCLUDED.reply_to, missives.reply_to),
+        cc_list = COALESCE(EXCLUDED.cc_list, missives.cc_list),
+        bcc_list = COALESCE(EXCLUDED.bcc_list, missives.bcc_list),
         body_html = EXCLUDED.body_html,
         status = EXCLUDED.status,
         updated_at = NOW()`,
@@ -106,6 +108,8 @@ export class StorageService {
         missive.folder ?? 'inbox',
         missive.receivedAt,
         missive.replyTo?.length ? await seal('missives', 'reply_to', JSON.stringify(missive.replyTo)) : null,
+        missive.cc?.length ? await seal('missives', 'cc_list', JSON.stringify(missive.cc)) : null,
+        missive.bcc?.length ? await seal('missives', 'bcc_list', JSON.stringify(missive.bcc)) : null,
       ],
     );
   }
@@ -490,6 +494,8 @@ function rowToMissive(row: any): Missive {
         ? JSON.parse(row.recipients)
         : row.recipients,
     replyTo: parseAddresses(row.reply_to),
+    cc: parseAddresses(row.cc_list),
+    bcc: parseAddresses(row.bcc_list),
     status: row.status,
     classification: row.classification ?? undefined,
     folder: row.folder ?? 'inbox',

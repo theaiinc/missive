@@ -8,7 +8,7 @@ import { useSenders, useSignature } from "@/hooks/useMe";
 import { Loader2, Sparkles } from "lucide-react";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
-export type Draft = { from?: string; to?: string; cc?: string; subject?: string; text?: string; replyTo?: string; fromName?: string };
+export type Draft = { from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; replyTo?: string; fromName?: string };
 
 const ComposeContext = createContext<(draft?: Draft) => void>(() => undefined);
 
@@ -35,6 +35,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     from: draft.from ?? mailboxes[0]?.address ?? "",
     to: draft.to ?? "",
     cc: draft.cc ?? "",
+    bcc: draft.bcc ?? "",
     subject: draft.subject ?? "",
     text: draft.text ?? "",
   });
@@ -157,10 +158,16 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             <span className={label}>To</span>
             <Input value={values.to} onChange={set("to")} placeholder="name@example.com, another@example.com" autoComplete="off" required autoFocus={!draft.to} />
           </label>
-          <label className="grid gap-1">
-            <span className={label}>Cc (optional)</span>
-            <Input value={values.cc} onChange={set("cc")} autoComplete="off" />
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <span className={label}>Cc (optional)</span>
+              <Input value={values.cc} onChange={set("cc")} autoComplete="off" />
+            </label>
+            <label className="grid gap-1">
+              <span className={label}>Bcc (optional, hidden from others)</span>
+              <Input value={values.bcc} onChange={set("bcc")} autoComplete="off" />
+            </label>
+          </div>
           <label className="grid gap-1">
             <span className={label}>Subject</span>
             <Input value={values.subject} onChange={set("subject")} required />

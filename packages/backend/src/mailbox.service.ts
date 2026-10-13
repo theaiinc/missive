@@ -25,6 +25,8 @@ export type OutgoingMail = {
   from: string;
   to: string[];
   cc?: string[];
+  /** Hidden recipients; only your own copy shows them. */
+  bcc?: string[];
   subject: string;
   text: string;
   /** Missive id of the message being replied to. */
@@ -186,6 +188,7 @@ export class MailboxService {
         from: { email: mailbox.address, name: mailbox.displayName ?? user.name ?? mailbox.address },
         to: mail.to,
         cc: mail.cc?.length ? mail.cc : undefined,
+        bcc: mail.bcc?.length ? mail.bcc : undefined,
         subject: mail.subject,
         text: mail.text,
         html,
@@ -211,6 +214,7 @@ export class MailboxService {
       from: { address: mailbox.address, name: mailbox.displayName ?? user.name },
       to: mail.to.map((address) => ({ address })),
       cc: (mail.cc ?? []).map((address) => ({ address })),
+      bcc: (mail.bcc ?? []).map((address) => ({ address })),
       status: "read",
       folder: "sent",
       accountEmail: mailbox.address,
