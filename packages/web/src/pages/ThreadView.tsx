@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import type { Missive, Thread } from "@theaiinc/missive-core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { useCompose } from "@/components/Compose";
 import { canSendAs, useMe } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
+import { TranslateBar, TranslatedBody, type Translation } from "@/components/Translate";
 
 async function fetchThread(
   id: string
@@ -130,6 +131,7 @@ export function ThreadView() {
 
 function EmailCard({ missive }: { missive: Missive }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [translation, setTranslation] = useState<Translation | null>(null);
   const { getColor } = useAccountColors();
   const compose = useCompose();
   const { data: me } = useMe();
@@ -231,8 +233,11 @@ function EmailCard({ missive }: { missive: Missive }) {
         </div>
       </div>
       <Separator />
+      <TranslateBar missiveId={missive.id} translation={translation} onTranslation={setTranslation} />
       <div className="p-0">
-        {missive.bodyHtml ? (
+        {translation ? (
+          <TranslatedBody translation={translation} />
+        ) : missive.bodyHtml ? (
           <iframe
             ref={iframeRef}
             className="w-full border-0"

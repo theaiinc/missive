@@ -5,12 +5,15 @@ import {
   Param,
   Query,
   Body,
+  HttpException,
+  NotFoundException,
 } from "@nestjs/common";
 import { MissiveService } from "./missive.service";
 import { SearchService } from "./search.service";
 import { OrganizerService } from "./organizer.service";
 import { StorageService } from "./storage/storage.service";
 import type { SearchQuery } from "@theaiinc/missive-core";
+import { LANGUAGES, TranslateError, translate } from "./translate";
 
 @Controller("api/v1")
 export class MissiveController {
@@ -88,6 +91,24 @@ export class MissiveController {
   @Post("thread/:id/summarize")
   async summarize(@Param("id") id: string) {
     return this.missive.summarize(id);
+  }
+
+  @Get("translate/languages")
+  languages() {
+    return Object.entries(LANGUAGES).map(([code, name]) => ({ code, name }));
+  }
+
+  /** The message in another language (the "Translate" link under a message). */
+  @Post("missive/:id/translate")
+  async translate(@Param("id") id: string, @Body() body: { to?: string }) {
+    const missive = await this.missive.getMissive(id);
+    if (!missive) throw new NotFoundException("No such message");
+    try {
+      return await translate(missive, body?.to ?? "en");
+    } catch (e) {
+      if (e instanceof TranslateError) throw new HttpException(e.message, e.status);
+      throw e;
+    }
   }
 
   @Post("missive/:id/classify")
