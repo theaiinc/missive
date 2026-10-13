@@ -26,7 +26,7 @@ describe("translate", () => {
 
   it("asks the translate model, with the language's name, through the edge", async () => {
     vi.stubEnv("LM_STUDIO_BASE_URL", "https://mail.example/internal/ai/v1");
-    vi.stubEnv("LM_STUDIO_TRANSLATE_MODEL", "@cf/google/gemma-4-26b-a4b-it");
+    vi.stubEnv("LM_STUDIO_WRITING_MODEL", "@cf/google/gemma-4-26b-a4b-it");
     const fetch = answer("<from>Vietnamese</from><subject>Meeting</subject><body>See you at 9.</body>");
     vi.stubGlobal("fetch", fetch);
     const out = await translate({ subject: "Cuộc họp", body: "Hẹn gặp lúc 9 giờ.", bodyHtml: undefined }, "en");

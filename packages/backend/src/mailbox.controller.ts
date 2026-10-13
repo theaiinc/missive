@@ -1,7 +1,8 @@
 import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, NotFoundException, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import { timingSafeEqual } from "node:crypto";
-import { MailboxService, SendError } from "./mailbox.service";
+import { MailboxService, SendError, textToHtml } from "./mailbox.service";
+import { GmailSendError, GmailSendService } from "./gmail-send.service";
 import { UsersService } from "./users.service";
 import { GroupsService } from "./groups.service";
 import { requireUser, runAsUser } from "./request-context";
@@ -23,7 +24,8 @@ export class MailboxController {
   constructor(
     private readonly mail: MailboxService,
     private readonly users: UsersService,
-    private readonly groups: GroupsService
+    private readonly groups: GroupsService,
+    private readonly gmail: GmailSendService
   ) {}
 
   @Get("health")
@@ -111,6 +113,24 @@ export class MailboxController {
     if (!subject) problems.push("Add a subject.");
     if (!text.trim()) problems.push("Write a message.");
     if (problems.length) throw new BadRequestException(problems.join(" "));
+    // From a connected Gmail account: through Gmail, in the original's Gmail thread.
+    if (await this.gmail.account(body.from as string)) {
+      try {
+        const missive = await this.gmail.send({
+          from: body.from as string,
+          to,
+          cc,
+          subject,
+          text,
+          html: textToHtml(text),
+          replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
+        });
+        return { id: missive.id, threadId: missive.threadId };
+      } catch (error) {
+        if (error instanceof GmailSendError) throw new BadRequestException(error.message);
+        throw error;
+      }
+    }
     try {
       const missive = await this.mail.send({
         from: body.from as string,
