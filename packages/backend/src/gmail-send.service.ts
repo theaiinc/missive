@@ -180,14 +180,29 @@ export class GmailSendService {
       createdAt: now,
       updatedAt: now,
     };
-    await this.storage.saveMissive(missive);
-    const thread = await this.storage.getThread(missive.threadId);
-    if (thread) {
-      if (!thread.missiveIds.includes(id)) thread.missiveIds.push(id);
-      thread.messageCount = thread.missiveIds.length;
-      thread.lastActivityAt = now;
+    // A new conversation (not a reply) has a Gmail thread Missive hasn't seen:
+    // make its thread first, as the sync does, since a message must belong to one.
+    let thread = await this.storage.getThread(missive.threadId);
+    if (!thread) {
+      thread = {
+        id: missive.threadId,
+        provider: "gmail",
+        providerThreadId: missive.threadId,
+        subject: mail.subject,
+        participants: [],
+        messageCount: 0,
+        missiveIds: [],
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
       await this.storage.saveThread(thread);
     }
+    await this.storage.saveMissive(missive);
+    if (!thread.missiveIds.includes(id)) thread.missiveIds.push(id);
+    thread.messageCount = thread.missiveIds.length;
+    thread.lastActivityAt = now;
+    await this.storage.saveThread(thread);
     return missive;
   }
 }
