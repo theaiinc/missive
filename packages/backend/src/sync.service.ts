@@ -67,120 +67,7 @@ export class SyncService {
         let synced = 0;
 
         for (const msg of messages) {
-          const existing = await this.storage.getMissiveSyncState(msg.id!);
-          // New means never stored. A stored message is fetched again only to
-          // repair a body that came in empty; that repair keeps its read state
-          // and isn't counted, announced, re-run through rules or re-added to
-          // its thread. (Skipping only when bodyHtml was present re-fetched every
-          // plain-text email on each sync, reported it as new and reset it to
-          // unread.)
-          if (existing && !existing.needsBodyRepair) continue;
-          const isNew = !existing;
-
-          const detail = await gmail.users.messages.get({
-            userId: "me",
-            id: msg.id!,
-            format: "full",
-          });
-
-          const headers = detail.data.payload?.headers ?? [];
-          const header = (name: string) =>
-            headers.find((h) => h.name === name)?.value ?? undefined;
-
-          const subject = header("Subject");
-          const fromRaw = header("From") ?? "";
-          const fromMatch = fromRaw.match(
-            /^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/
-          );
-          const dateRaw = header("Date");
-          const toRaw = header("To") ?? "";
-
-          // ── Extract bodies ──
-          const parts = flattenParts(detail.data.payload);
-          const textPart = parts.find((p) => p.mimeType === "text/plain");
-          const htmlPart = parts.find((p) => p.mimeType === "text/html");
-
-          // Decode body from inline data or fetch via attachment API
-          let bodyHtml = await this.decodeGmailBody(htmlPart, gmail, msg.id!);
-          const textBody = await this.decodeGmailBody(textPart, gmail, msg.id!);
-
-          if (bodyHtml) {
-            bodyHtml = await this.inlineCidImages(bodyHtml, parts, gmail, msg.id!);
-          }
-
-          const body = textBody || (bodyHtml ? stripHtml(bodyHtml) : "(no content)");
-
-          // ── Thread ──
-          const providerThreadId = detail.data.threadId ?? msg.id!;
-
-          let thread = await this.storage.getThread(providerThreadId);
-          if (!thread) {
-            thread = {
-              id: providerThreadId,
-              provider: "gmail",
-              providerThreadId,
-              subject,
-              participants: [],
-              messageCount: 0,
-              missiveIds: [],
-              lastActivityAt: new Date().toISOString(),
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            await this.storage.saveThread(thread);
-          }
-
-          const missive: Missive = {
-            id: msg.id!,
-            threadId: providerThreadId,
-            channel: "email",
-            direction: "inbound",
-            provider: "gmail",
-            providerMessageId: msg.id!,
-            subject,
-            body: body || "(no content)",
-            bodyHtml,
-            from: {
-              name: fromMatch?.[1],
-              address: fromMatch?.[2] ?? fromRaw,
-            },
-            replyTo: parseAddressList(header("Reply-To")),
-            cc: parseAddressList(header("Cc")),
-            bcc: parseAddressList(header("Bcc")),
-            to: toRaw.split(",").map((addr: string) => ({
-              address: addr.trim(),
-            })),
-            // New mail takes Gmail's read state (read there already means read here).
-            status: existing?.status ?? (detail.data.labelIds?.includes("UNREAD") === false ? "read" : "unread"),
-            accountEmail: connector.email,
-            receivedAt: dateRaw
-              ? new Date(dateRaw).toISOString()
-              : new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-
-          await this.storage.saveMissive(missive);
-          if (!isNew) continue;
-
-          // Apply rules to the newly synced missive
-          const ruleActions = await this.rules.evaluate(missive);
-          if (ruleActions.length > 0) {
-            await this.rules.applyActions(missive.id, ruleActions);
-          }
-
-          if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
-          thread.messageCount = thread.missiveIds.length;
-          thread.lastActivityAt = new Date().toISOString();
-          await this.storage.saveThread(thread);
-
-          this.eventEmitter.emit("missive.received", {
-            type: "missive.received",
-            timestamp: new Date().toISOString(),
-            payload: missive,
-          });
-
-          synced++;
+          if ((await this.importGmailMessage(gmail, connector, msg.id!, true)) === "new") synced++;
         }
 
         results[connector.email] = { synced };
@@ -195,6 +82,164 @@ export class SyncService {
     }
 
     return results;
+  }
+
+  /**
+   * Stores one Gmail message (or repairs one whose body came in empty), runs
+   * rules on it and adds it to its thread. "new" when it wasn't stored before.
+   */
+  private async importGmailMessage(
+    gmail: ReturnType<typeof google.gmail>,
+    connector: StoredConnector,
+    id: string,
+    announce: boolean,
+  ): Promise<"new" | "repaired" | "skipped"> {
+    const msg = { id };
+    const existing = await this.storage.getMissiveSyncState(msg.id!);
+    // New means never stored. A stored message is fetched again only to
+    // repair a body that came in empty; that repair keeps its read state
+    // and isn't counted, announced, re-run through rules or re-added to
+    // its thread. (Skipping only when bodyHtml was present re-fetched every
+    // plain-text email on each sync, reported it as new and reset it to
+    // unread.)
+    if (existing && !existing.needsBodyRepair) return "skipped";
+    const isNew = !existing;
+
+    const detail = await gmail.users.messages.get({
+      userId: "me",
+      id: msg.id!,
+      format: "full",
+    });
+
+    const labels = detail.data.labelIds ?? [];
+    const headers = detail.data.payload?.headers ?? [];
+    const header = (name: string) =>
+      headers.find((h) => h.name === name)?.value ?? undefined;
+
+    const subject = header("Subject");
+    const fromRaw = header("From") ?? "";
+    const fromMatch = fromRaw.match(
+      /^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/
+    );
+    const dateRaw = header("Date");
+    const toRaw = header("To") ?? "";
+
+    // ── Extract bodies ──
+    const parts = flattenParts(detail.data.payload);
+    const textPart = parts.find((p) => p.mimeType === "text/plain");
+    const htmlPart = parts.find((p) => p.mimeType === "text/html");
+
+    // Decode body from inline data or fetch via attachment API
+    let bodyHtml = await this.decodeGmailBody(htmlPart, gmail, msg.id!);
+    const textBody = await this.decodeGmailBody(textPart, gmail, msg.id!);
+
+    if (bodyHtml) {
+      bodyHtml = await this.inlineCidImages(bodyHtml, parts, gmail, msg.id!);
+    }
+
+    const body = textBody || (bodyHtml ? stripHtml(bodyHtml) : "(no content)");
+
+    // ── Thread ──
+    const providerThreadId = detail.data.threadId ?? msg.id!;
+
+    let thread = await this.storage.getThread(providerThreadId);
+    if (!thread) {
+      thread = {
+        id: providerThreadId,
+        provider: "gmail",
+        providerThreadId,
+        subject,
+        participants: [],
+        messageCount: 0,
+        missiveIds: [],
+        lastActivityAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await this.storage.saveThread(thread);
+    }
+
+    const missive: Missive = {
+      id: msg.id!,
+      threadId: providerThreadId,
+      channel: "email",
+      direction: "inbound",
+      provider: "gmail",
+      providerMessageId: msg.id!,
+      subject,
+      body: body || "(no content)",
+      bodyHtml,
+      from: {
+        name: fromMatch?.[1],
+        address: fromMatch?.[2] ?? fromRaw,
+      },
+      replyTo: parseAddressList(header("Reply-To")),
+      cc: parseAddressList(header("Cc")),
+      bcc: parseAddressList(header("Bcc")),
+      to: toRaw.split(",").map((addr: string) => ({
+        address: addr.trim(),
+      })),
+      // New mail takes Gmail's read state (read there already means read here).
+      status: existing?.status ?? (detail.data.labelIds?.includes("UNREAD") === false ? "read" : "unread"),
+      accountEmail: connector.email,
+      // Mail found outside Gmail's inbox (by search) keeps its place: spam
+      // stays spam, archived stays archived. The sync itself lists the inbox.
+      folder: labels.includes("SPAM") ? "spam" : labels.includes("INBOX") ? "inbox" : "archived",
+      receivedAt: dateRaw
+        ? new Date(dateRaw).toISOString()
+        : new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await this.storage.saveMissive(missive);
+    if (!isNew) return "repaired";
+
+    // Apply rules to the newly synced missive
+    const ruleActions = await this.rules.evaluate(missive);
+    if (ruleActions.length > 0) {
+      await this.rules.applyActions(missive.id, ruleActions);
+    }
+
+    if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
+    thread.messageCount = thread.missiveIds.length;
+    thread.lastActivityAt = new Date().toISOString();
+    await this.storage.saveThread(thread);
+
+    // Old mail brought in by a search isn't "new mail": no notification.
+    if (announce) {
+      this.eventEmitter.emit("missive.received", {
+        type: "missive.received",
+        timestamp: new Date().toISOString(),
+        payload: missive,
+      });
+    }
+    return "new";
+  }
+
+  /**
+   * Searches the connected Gmail accounts themselves (all mail but trash) and
+   * stores matches Missive doesn't have yet: the sync only fetches the newest
+   * inbox mail, so older or archived mail is found the first time it's
+   * searched for. Returns how many messages were added.
+   */
+  async importGmailMatches(text: string, limit = 25): Promise<number> {
+    let added = 0;
+    for (const connector of await this.store.list("gmail")) {
+      if (connector.status === "needs_reauth") continue;
+      try {
+        const oauth2 = this.store.createOAuth2Client();
+        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(connector.id) });
+        const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
+        const res = await gmail.users.messages.list({ userId: "me", maxResults: limit, q: text, includeSpamTrash: false });
+        for (const m of res.data.messages ?? []) {
+          if ((await this.importGmailMessage(gmail, connector, m.id!, false)) === "new") added++;
+        }
+      } catch (err) {
+        console.error("Gmail search import error:", safeError(err));
+      }
+    }
+    return added;
   }
 
   /** Sync Outlook / Microsoft 365 accounts */
