@@ -112,8 +112,9 @@ export class ConnectorStore {
       access_type: "offline",
       prompt: "consent",
       state: "gmail",
+      // As few as the features need (Google's verification checks): modify
+      // reads mail and sets the UNREAD label, which readonly can't; send replies.
       scope: [
-        "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/userinfo.email",
