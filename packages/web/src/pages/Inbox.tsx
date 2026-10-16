@@ -199,7 +199,16 @@ export function Inbox() {
   // ── Debounced auto-search ──
   useEffect(() => {
     const trimmed = searchQuery.trim();
-    if (!trimmed) return;
+    // Emptied by hand (backspace, select-all and delete): leave search mode,
+    // as the × button and Escape do.
+    if (!trimmed) {
+      cancelDebounce();
+      semanticAbortRef.current?.abort();
+      setSemanticLoading(false);
+      setActiveSearch("");
+      setSemanticResult("");
+      return;
+    }
 
     // AI search asks the model, so it runs only on Enter, never while typing.
     if (semantic) {
