@@ -228,13 +228,24 @@ export class StorageService {
     const from = query.from?.trim().toLowerCase();
     if (text || from) {
       // Decrypt this user's candidate rows (already narrowed by folder,
-      // channel, dates, ...) and match in memory, as ILIKE '%…%' did.
+      // channel, dates, ...) and match in memory, as ILIKE '%…%' did. With no
+      // folder given, search spans every folder but Spam and deleted mail.
+      const scope = query.folder
+        ? where
+        : `${where ? `${where} AND` : 'WHERE'} folder <> 'spam' AND status <> 'deleted'`;
       const dataRes = await this.pg.query(
-        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${where} ORDER BY received_at DESC`,
+        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${scope} ORDER BY received_at DESC`,
         params,
       );
+      // Free text matches who it's from and to as well as subject and body
+      // ("byteplus" finds mail from BytePlus <noreply@byteplus.com>).
+      const haystack = (r: any) =>
+        [r.subject, r.body, r.sender_name, r.sender_address, typeof r.recipients === 'string' ? r.recipients : JSON.stringify(r.recipients ?? '')]
+          .map((v) => String(v ?? ''))
+          .join('\n')
+          .toLowerCase();
       const matches = (await openRows('missives', dataRes.rows)).filter((r) =>
-        (!text || `${r.subject ?? ''}\n${r.body ?? ''}`.toLowerCase().includes(text)) &&
+        (!text || haystack(r).includes(text)) &&
         (!from || String(r.sender_address ?? '').toLowerCase().includes(from)),
       );
       total = matches.length;

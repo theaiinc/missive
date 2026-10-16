@@ -260,7 +260,9 @@ export function Inbox() {
         limit: String(PAGE_SIZE),
         offset: String(pageParam),
       });
-      if (folder !== "all") params.set("folder", folder);
+      // Search looks in every folder (like Gmail; Spam only from Spam), so
+      // mail the organizer filed away is still found from the inbox.
+      if (folder !== "all" && (!activeSearch || folder === "spam")) params.set("folder", folder);
       if (activeSearch) params.set("query", activeSearch);
       if (orgFilter) params.set("organization", orgFilter);
       if (unreadOnly) params.set("status", "unread");
@@ -699,6 +701,12 @@ export function Inbox() {
                       <Badge variant="secondary" className="hidden sm:inline-flex text-[10px] px-1.5 py-0 h-4">
                         {missive.channel}
                       </Badge>
+                      {/* Search spans folders: say where each result lives. */}
+                      {activeSearch && missive.folder && missive.folder !== folder && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                          {folders?.find((f) => f.slug === missive.folder)?.name ?? missive.folder}
+                        </Badge>
+                      )}
                     </div>
                     <p
                       className={cn(
