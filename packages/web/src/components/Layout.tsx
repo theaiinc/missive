@@ -14,6 +14,7 @@ import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
 import { canSendAs, useMe } from "@/hooks/useMe";
 import { ClaimMailbox } from "@/components/ClaimMailbox";
 import { ComposeProvider, useCompose } from "./Compose";
+import { setAppBadge } from "../lib/badge";
 
 const folderIcons: Record<string, React.ElementType> = {
   inbox: InboxIcon,
@@ -85,7 +86,12 @@ function LayoutShell() {
   const { data: folders } = useQuery({
     queryKey: ["folders"],
     queryFn: fetchFolders,
+    // Keeps the unread counts, and the icon's badge, current while Missive sits in the background.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: true,
   });
+  const inboxUnread = folders?.find((f) => f.slug === "inbox")?.missiveCount;
+  useEffect(() => { if (inboxUnread !== undefined) setAppBadge(inboxUnread); }, [inboxUnread]);
   const [showNewFolder, setShowNewFolder] = useState(false);
   // Below md the sidebar is a slide-out menu; it closes on navigation.
   const [menuOpen, setMenuOpen] = useState(false);

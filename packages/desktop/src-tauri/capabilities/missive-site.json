@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "missive-site",
+  "description": "What missive.theaiinc.com may do in the app: show system notifications and the Dock badge (src/notifications.js).",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://missive.theaiinc.com/*"
+    ]
+  },
+  "permissions": [
+    "allow-notification-permission",
+    "allow-request-notification-permission",
+    "allow-notify",
+    "core:window:allow-set-badge-count"
+  ]
+}
