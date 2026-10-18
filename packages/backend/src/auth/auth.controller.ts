@@ -11,6 +11,7 @@ import {
 import { issuer, verifyIdToken } from "./oidc";
 import { siteFor, type Site } from "./sites";
 import { syncSignIn, type IdClaimsWithIdentity } from "./refresh";
+import { mintDesktopCode, redeemDesktopCode, returnToAppPage } from "./desktop-handoff";
 
 /**
  * Sign-in with Aegis ID (OIDC authorization code + PKCE, confidential client).
@@ -19,7 +20,8 @@ import { syncSignIn, type IdClaimsWithIdentity } from "./refresh";
  */
 const redirectUri = (site: Site) => `${site.appUrl}/auth/callback`;
 
-type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; clientId: string; exp: number };
+/** desktop: started from the desktop app, which gets the session (desktop-handoff.ts) instead of this browser. */
+type OidcState = { state: string; verifier: string; nonce: string; returnTo: string; clientId: string; desktop?: boolean; exp: number };
 
 /** The person's Aegis account page (password, passkeys, two-step sign-in) in this site's tenant. */
 export function aegisAccountUrl(site: Site): string {
@@ -35,6 +37,22 @@ export function aegisLogoutUrl(site: Site): string {
   }).toString();
   return url.toString();
 }
+
+/**
+ * One state cookie per sign-in in progress, named after its state, so two at
+ * once (two tabs, or the desktop app opening the browser twice) don't spoil
+ * each other: with one shared cookie, finishing the older one said "expired".
+ */
+const stateCookie = (state: unknown) =>
+  typeof state === "string" && /^[A-Za-z0-9_-]{16,}$/.test(state) ? `${STATE_COOKIE}_${state.slice(0, 16)}` : null;
+
+/** Set while a sign-in from the desktop app is in progress, so "Try again" keeps it one. */
+const DESKTOP_COOKIE = "missive_desktop";
+const tryAgain = (req: Request, extra = "") => {
+  const desktop = readCookie(req.headers.cookie, DESKTOP_COOKIE) === "1";
+  const query = [desktop ? "desktop=1" : "", extra].filter(Boolean).join("&");
+  return `/auth/login${query ? `?${query}` : ""}`;
+};
 
 /** Only same-app paths, so the sign-in can't be used as an open redirect. */
 const safeReturn = (value: unknown) =>
@@ -57,6 +75,7 @@ export class AuthController {
       nonce: randomToken(),
       returnTo: safeReturn(req.query.returnTo),
       clientId: site.clientId,
+      ...(req.query.desktop === "1" ? { desktop: true } : {}),
       exp: Date.now() + 10 * 60_000,
     };
     const url = new URL(`${issuer()}/authorize`);
@@ -79,17 +98,21 @@ export class AuthController {
       code_challenge: pkceChallenge(verifier),
       code_challenge_method: "S256",
     }).toString();
-    res.setHeader("set-cookie", cookie(STATE_COOKIE, seal(saved), 600));
+    res.setHeader("set-cookie", [
+      cookie(stateCookie(saved.state)!, seal(saved), 600),
+      saved.desktop ? cookie(DESKTOP_COOKIE, "1", 600) : cookie(DESKTOP_COOKIE, "", 0),
+    ]);
     res.redirect(302, url.toString());
   }
 
   @Get("auth/callback")
   async callback(@Req() req: Request, @Res() res: Response) {
     const site = siteFor(req);
-    const saved = unseal<OidcState>(readCookie(req.headers.cookie, STATE_COOKIE));
+    const savedName = stateCookie(req.query.state);
+    const saved = savedName ? unseal<OidcState>(readCookie(req.headers.cookie, savedName)) : null;
     const code = typeof req.query.code === "string" ? req.query.code : "";
     if (!saved || saved.state !== req.query.state || saved.clientId !== site.clientId || !code) {
-      return res.status(400).type("html").send(`<p>That sign-in expired. <a href="/auth/login">Try again</a>.</p>`);
+      return res.status(400).type("html").send(`<p>That sign-in expired. <a href="${tryAgain(req)}">Try again</a>.</p>`);
     }
     const tokenResponse = await fetch(`${issuer()}/token`, {
       method: "POST",
@@ -104,12 +127,12 @@ export class AuthController {
       }),
     });
     if (!tokenResponse.ok) {
-      return res.status(502).type("html").send(`<p>Aegis didn't accept the sign-in. <a href="/auth/login?prompt=login">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
+      return res.status(502).type("html").send(`<p>Aegis didn't accept the sign-in. <a href="${tryAgain(req, "prompt=login")}">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
     }
     const tokens = (await tokenResponse.json()) as { id_token?: string; refresh_token?: string };
     const claims = tokens.id_token ? await verifyIdToken(tokens.id_token, saved.nonce, site.clientId) : null;
     if (!claims?.sub || !claims.email || claims.email_verified !== true) {
-      return res.status(403).type("html").send(`<p>Your Aegis account needs a verified email. Verify it in Aegis, or ask your admin to set it up. <a href="/auth/login?prompt=login">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
+      return res.status(403).type("html").send(`<p>Your Aegis account needs a verified email. Verify it in Aegis, or ask your admin to set it up. <a href="${tryAgain(req, "prompt=login")}">Try again</a> or <a href="/auth/logout">use another account</a>.</p>`);
     }
     let user;
     try {
@@ -126,13 +149,35 @@ export class AuthController {
     const refresh: SavedRefresh | null = tokens.refresh_token
       ? { token: tokens.refresh_token, clientId: site.clientId, exp: Date.now() + REFRESH_COOKIE_SECONDS * 1000 }
       : null;
-    res.setHeader("set-cookie", [
+    const sessionCookies = [
       cookie(SESSION_COOKIE, seal(session), SESSION_HOURS * 3600),
       ...(refresh ? [cookie(REFRESH_COOKIE, encrypt(refresh), REFRESH_COOKIE_SECONDS)] : []),
-      cookie(STATE_COOKIE, "", 0),
-      cookie(INVITE_COOKIE, "", 0),
-    ]);
+    ];
+    const done = [cookie(savedName!, "", 0), cookie(DESKTOP_COOKIE, "", 0), cookie(STATE_COOKIE, "", 0), cookie(INVITE_COOKIE, "", 0)];
+    if (saved.desktop) {
+      // The desktop app redeems this at /auth/desktop; the browser stays signed out of Missive.
+      const page = returnToAppPage(mintDesktopCode(sessionCookies));
+      res.setHeader("set-cookie", done);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Security-Policy", page.csp);
+      return res.type("html").send(page.html);
+    }
+    res.setHeader("set-cookie", [...sessionCookies, ...done]);
     res.redirect(302, saved.returnTo);
+  }
+
+  /** The desktop app's web view, back from missive://auth?code=… (desktop-handoff.ts): its session, once. */
+  @Get("auth/desktop")
+  desktop(@Req() req: Request, @Res() res: Response) {
+    const cookies = redeemDesktopCode(req.query.code);
+    res.setHeader("Cache-Control", "no-store");
+    if (!cookies) {
+      // The same missive:// link opened again (the browser page's button): already signed in, carry on.
+      if (unseal<Session>(readCookie(req.headers.cookie, SESSION_COOKIE))) return res.redirect(302, "/inbox");
+      return res.status(400).type("html").send(`<p>That sign-in expired. <a href="/auth/login">Try again</a>.</p>`);
+    }
+    res.setHeader("set-cookie", cookies);
+    res.redirect(302, "/inbox");
   }
 
   /**

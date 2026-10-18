@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Missive</title>
+<!-- Shown while sign-in happens in the default browser (src-tauri/src/main.rs). -->
+<style>
+:root{color-scheme:light dark;--bg:#f7f7f8;--fg:#18181b;--muted:#52525b;--card:#fff;--line:#e4e4e7;--accent:#2563eb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f0f12;--fg:#f4f4f5;--muted:#a1a1aa;--card:#18181b;--line:#27272a;--accent:#60a5fa}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;padding:16px;box-sizing:border-box;-webkit-user-select:none;user-select:none}
+main{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px;max-width:420px;width:100%;text-align:center}
+h1{font-size:18px;margin:0 0 8px}p{margin:0 0 20px;color:var(--muted)}
+a{display:inline-block;padding:10px 18px;border-radius:8px;background:var(--accent);color:#fff;text-decoration:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign in to Missive in your browser</h1>
+  <p>Your browser opened Missive's sign-in page. When you've signed in, you'll come back here automatically.</p>
+  <a id="again" href="https://missive.theaiinc.com/auth/login?returnTo=%2Finbox">Open the browser again</a>
+</main>
+<script>
+  // The sign-in page the app sent to the browser; clicking it sends it there again.
+  const login = new URLSearchParams(location.search).get("login");
+  if (login && login.startsWith("https://missive.theaiinc.com/auth/login")) document.getElementById("again").href = login;
+</script>
+</body>
+</html>

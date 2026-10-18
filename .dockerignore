@@ -8,3 +8,5 @@
 .cursor
 .docker
 **/.wrangler
+# The desktop app (Tauri) is built on a Mac, never in the API image.
+packages/desktop
