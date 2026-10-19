@@ -25,9 +25,10 @@ function fakePg(initial: Partial<Row>) {
       return { rows: [{ ...row }] };
     }
     if (sql.includes("status = 'needs_reauth'")) {
+      if (row.status === "needs_reauth") return { rows: [] };
       row.status = "needs_reauth";
       row.last_error = params[1];
-      return { rows: [] };
+      return { rows: [{ id: row.id }] };
     }
     throw new Error(`unexpected query: ${sql}`);
   });
@@ -128,5 +129,18 @@ describe("SyncService with a connector that needs reauth", () => {
     const r = await sync.syncOutlook();
     expect(r["me@example.com"]).toMatchObject({ needsReauth: true, newlyFlagged: false });
     expect(store.getValidOutlookToken).not.toHaveBeenCalled();
+  });
+});
+
+describe("ConnectorStore.markNeedsReauth", () => {
+  it("tells the person once, when the account first stops working", async () => {
+    const db = fakePg({});
+    const emit = vi.fn();
+    const store = new ConnectorStore(db.pg, { emit } as any);
+    await store.markNeedsReauth("outlook:me", "invalid_grant");
+    await store.markNeedsReauth("outlook:me", "invalid_grant"); // the next sync fails the same way
+    expect(db.row.status).toBe("needs_reauth");
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith("connector.needs_reauth", { provider: "outlook", email: "me@example.com" });
   });
 });

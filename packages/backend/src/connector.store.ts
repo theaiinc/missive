@@ -1,6 +1,7 @@
 import { openForOwner, sealForCurrentUser } from "./data-cipher";
 import { addressIndex } from "./identity-crypto";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { google, type Auth } from "googleapis";
 import { PostgresService } from "./storage/postgres.service";
 import { mainSite } from "./auth/sites";
@@ -58,7 +59,7 @@ export const GCAL_SCOPES = [
 
 @Injectable()
 export class ConnectorStore {
-  constructor(private readonly pg: PostgresService) {}
+  constructor(private readonly pg: PostgresService, @Optional() private readonly events?: EventEmitter2) {}
 
   /**
    * Refreshes in flight, per connector. A refresh token can be single-use
@@ -75,12 +76,19 @@ export class ConnectorStore {
     return next;
   }
 
-  /** Stops syncing this connector until the person reconnects it (save() clears the flag). */
+  /**
+   * Stops syncing this connector until the person reconnects it (save() clears the flag).
+   * The first time, it tells them (connector.needs_reauth: a push notification), so a
+   * dropped account doesn't just go quiet; the app also shows a banner (ConnectionAlert).
+   */
   async markNeedsReauth(id: string, reason: string): Promise<void> {
-    await this.pg.query(
-      "UPDATE connectors SET status = 'needs_reauth', last_error = $2, updated_at = NOW() WHERE id = $1",
+    const { rows } = await this.pg.query(
+      "UPDATE connectors SET status = 'needs_reauth', last_error = $2, updated_at = NOW() WHERE id = $1 AND status <> 'needs_reauth' RETURNING id",
       [id, reason.slice(0, 300)]
     );
+    if (!rows.length) return;
+    const connector = await this.get(id).catch(() => null);
+    this.events?.emit("connector.needs_reauth", { provider: connector?.provider ?? id.split(":")[0], email: connector?.email ?? "" });
   }
 
   /** Runs a token refresh; a refusal from the token endpoint flags the connector instead of being retried. */

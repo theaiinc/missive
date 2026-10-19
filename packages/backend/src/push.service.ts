@@ -11,6 +11,8 @@ import { safeError } from "./log-safe";
 /** Older mail (a first sync, a backlog) is filed quietly. */
 const FRESH_MS = 15 * 60_000;
 
+const PROVIDER_NAMES: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", gcal: "Google Calendar", imap: "Your mail server" };
+
 const endpointHash = (endpoint: string) => createHash("sha256").update(endpoint).digest("hex");
 
 /**
@@ -54,19 +56,35 @@ export class PushService {
     void runAsUser(user, () => this.announce(event.payload)).catch((e) => this.log.warn(`Push failed: ${safeError(e)}`));
   }
 
+  /** A mail account stopped accepting Missive's sign-in (ConnectorStore.markNeedsReauth): say so once. */
+  @OnEvent("connector.needs_reauth")
+  onNeedsReauth(event: { provider: string; email: string }) {
+    const user = currentUser();
+    if (!this.enabled || !user) return;
+    const provider = PROVIDER_NAMES[event.provider] ?? event.provider;
+    void runAsUser(user, () =>
+      this.send({
+        title: `Reconnect ${event.email || provider}`,
+        body: `${provider} stopped accepting Missive's sign-in, so its mail isn't arriving. Tap to reconnect.`,
+        url: "/settings",
+        tag: `reauth:${event.provider}:${event.email}`,
+      }),
+    ).catch((e) => this.log.warn(`Push failed: ${safeError(e)}`));
+  }
+
   private async announce(m: Missive): Promise<void> {
     if (m.direction !== "inbound" || Date.now() - Date.parse(m.receivedAt) > FRESH_MS) return;
     // Where it is now: a rule (or a rule learned from your filing) may have moved it already.
     const { rows: now } = await this.pg.query(`SELECT folder, status FROM missives WHERE id = $1`, [m.id]);
     if (now[0]?.folder !== "inbox" || now[0]?.status !== "unread") return;
+    await this.send({ title: m.from.name || m.from.address, body: m.subject || "(no subject)", url: `/thread/${m.threadId}`, tag: m.threadId });
+  }
+
+  /** To every browser the current user turned notifications on in. */
+  private async send(notification: { title: string; body: string; url: string; tag: string }): Promise<void> {
     const { rows } = await this.pg.query(`SELECT id, subscription FROM push_subscriptions`);
     if (!rows.length) return;
-    const payload = JSON.stringify({
-      title: m.from.name || m.from.address,
-      body: m.subject || "(no subject)",
-      url: `/thread/${m.threadId}`,
-      tag: m.threadId,
-    });
+    const payload = JSON.stringify(notification);
     for (const row of await openRows("push_subscriptions", rows)) {
       try {
         await webpush.sendNotification(JSON.parse(row.subscription), payload, { TTL: 3600 });
