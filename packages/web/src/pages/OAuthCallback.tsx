@@ -7,6 +7,17 @@ export function OAuthCallback() {
   const [status, setStatus] = useState("Exchanging authorization code...");
 
   useEffect(() => {
+    // Started in the Mac app, which sent the sign-in to the browser (packages/desktop,
+    // src-tauri/src/main.rs): hand the code back to the app, which exchanges it as
+    // its own signed-in user. This browser may not be signed in to Missive at all.
+    const rawState = searchParams.get("state");
+    if (rawState?.startsWith("desktop:")) {
+      const back = new URLSearchParams(searchParams);
+      back.set("state", rawState.slice("desktop:".length));
+      setStatus("Back to Missive… You can close this tab.");
+      window.location.replace(`missive://oauth?${back.toString()}`);
+      return;
+    }
     const code = searchParams.get("code");
     const error = searchParams.get("error");
     const state = searchParams.get("state") ?? "gmail"; // default to gmail for backward compat
