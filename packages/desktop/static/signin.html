@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Missive</title>
-<!-- Shown while sign-in happens in the default browser (src-tauri/src/main.rs). -->
+<!-- Shown while signing in, or connecting an account, happens in the default browser (src-tauri/src/main.rs). -->
 <style>
 :root{color-scheme:light dark;--bg:#f7f7f8;--fg:#18181b;--muted:#52525b;--card:#fff;--line:#e4e4e7;--accent:#2563eb}
 @media (prefers-color-scheme:dark){:root{--bg:#0f0f12;--fg:#f4f4f5;--muted:#a1a1aa;--card:#18181b;--line:#27272a;--accent:#60a5fa}}
@@ -16,14 +16,20 @@ a{display:inline-block;padding:10px 18px;border-radius:8px;background:var(--acce
 </head>
 <body>
 <main>
-  <h1>Sign in to Missive in your browser</h1>
-  <p>Your browser opened Missive's sign-in page. When you've signed in, you'll come back here automatically.</p>
+  <h1 id="title">Sign in to Missive in your browser</h1>
+  <p id="text">Your browser opened Missive's sign-in page. When you've signed in, you'll come back here automatically.</p>
   <a id="again" href="https://missive.theaiinc.com/auth/login?returnTo=%2Finbox">Open the browser again</a>
 </main>
 <script>
-  // The sign-in page the app sent to the browser; clicking it sends it there again.
-  const login = new URLSearchParams(location.search).get("login");
-  if (login && login.startsWith("https://missive.theaiinc.com/auth/login")) document.getElementById("again").href = login;
+  const params = new URLSearchParams(location.search);
+  if (params.get("kind") === "connect") {
+    document.getElementById("title").textContent = "Connect your account in your browser";
+    document.getElementById("text").textContent = "Your browser opened the sign-in for the account you're connecting. When you're done, you'll come back here automatically.";
+  }
+  // What the app sent to the browser; clicking sends it there again (the app catches the navigation).
+  const again = params.get("again") ?? params.get("login");
+  const allowed = ["https://missive.theaiinc.com/auth/login", "https://accounts.google.com/", "https://login.microsoftonline.com/", "https://login.live.com/", "https://id.theaiinc.com/"];
+  if (again && allowed.some((p) => again.startsWith(p))) document.getElementById("again").href = again;
 </script>
 </body>
 </html>

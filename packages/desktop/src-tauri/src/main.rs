@@ -26,6 +26,25 @@ fn is_sign_in(url: &Url) -> bool {
     url.origin().ascii_serialization() == SITE && url.path() == "/auth/login"
 }
 
+// Connecting Gmail, Outlook or Google Calendar (Settings, Calendar) goes to
+// the provider's sign-in, which stalls in a web view too (Google's two-step
+// verification never finishes). It also goes to the browser, with "desktop:"
+// before its state; Google sends that back to /oauth, which then opens
+// missive://oauth?... (web/src/pages/OAuthCallback.tsx) and this window
+// finishes the connection on /oauth, signed in as itself.
+const PROVIDER_SIGN_IN: &[&str] = &["accounts.google.com", "login.microsoftonline.com", "login.live.com"];
+const AEGIS: &str = "id.theaiinc.com";
+
+fn is_provider_sign_in(url: &Url) -> bool {
+    url.scheme() == "https" && url.host_str().is_some_and(|h| PROVIDER_SIGN_IN.contains(&h))
+}
+
+// Aegis's own pages (sign-in, two-step, passkeys) as well, except signing out,
+// which has to clear this window's Aegis session.
+fn is_aegis(url: &Url) -> bool {
+    url.scheme() == "https" && url.host_str() == Some(AEGIS) && url.path() != "/session/end"
+}
+
 fn sign_in_in_browser(handle: &AppHandle, login: &Url) {
     let mut url = login.clone();
     let kept: Vec<(String, String)> = login
@@ -37,6 +56,27 @@ fn sign_in_in_browser(handle: &AppHandle, login: &Url) {
         .clear()
         .extend_pairs(kept)
         .append_pair("desktop", "1");
+    open_in_browser(handle, &url);
+    show_waiting(handle, "signin", login);
+}
+
+fn connect_in_browser(handle: &AppHandle, provider: &Url) {
+    let mut url = provider.clone();
+    let pairs: Vec<(String, String)> = provider
+        .query_pairs()
+        .map(|(k, v)| {
+            let v = if k == "state" && !v.starts_with("desktop:") { format!("desktop:{v}") } else { v.into_owned() };
+            (k.into_owned(), v)
+        })
+        .collect();
+    if !pairs.is_empty() {
+        url.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+    open_in_browser(handle, &url);
+    show_waiting(handle, "connect", provider);
+}
+
+fn open_in_browser(handle: &AppHandle, url: &Url) {
     // A signed-out page asks to sign in once per request that failed: open
     // the browser for the first only, or each new tab spoils the one before.
     static LAST_OPENED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
@@ -45,11 +85,13 @@ fn sign_in_in_browser(handle: &AppHandle, login: &Url) {
         let _ = handle.opener().open_url(url.as_str(), None::<&str>);
         *last = Some(std::time::Instant::now());
     }
-    drop(last);
-    // The window stays on a page saying so, with a way to open the browser again.
+}
+
+/// The window stays on a page saying where to look, with a way to open the browser again.
+fn show_waiting(handle: &AppHandle, kind: &str, again: &Url) {
     if let Some(window) = handle.get_webview_window("main") {
         let mut page = Url::parse("tauri://localhost/signin.html").expect("a URL");
-        page.query_pairs_mut().append_pair("login", login.as_str());
+        page.query_pairs_mut().append_pair("kind", kind).append_pair("again", again.as_str());
         tauri::async_runtime::spawn(async move {
             let _ = window.navigate(page);
         });
@@ -57,23 +99,29 @@ fn sign_in_in_browser(handle: &AppHandle, login: &Url) {
 }
 
 fn signed_in(handle: &AppHandle, urls: Vec<Url>) {
-    let Some(code) = urls
-        .iter()
-        .filter(|u| u.scheme() == "missive" && u.host_str() == Some("auth"))
-        .find_map(|u| {
-            u.query_pairs()
-                .find(|(k, _)| k == "code")
-                .map(|(_, v)| v.into_owned())
-        })
-    else {
-        return;
-    };
-    let Some(window) = handle.get_webview_window("main") else {
+    let Some(link) = urls.iter().find(|u| u.scheme() == "missive") else {
         return;
     };
     let mut url = Url::parse(SITE).expect("SITE is a URL");
-    url.set_path("/auth/desktop");
-    url.query_pairs_mut().append_pair("code", &code);
+    match link.host_str() {
+        // Signed in in the browser: redeem the code here (auth.controller.ts).
+        Some("auth") => {
+            let Some(code) = link.query_pairs().find(|(k, _)| k == "code").map(|(_, v)| v.into_owned()) else {
+                return;
+            };
+            url.set_path("/auth/desktop");
+            url.query_pairs_mut().append_pair("code", &code);
+        }
+        // Back from connecting an account: /oauth exchanges the code as this window's user.
+        Some("oauth") => {
+            url.set_path("/oauth");
+            url.set_query(link.query());
+        }
+        _ => return,
+    }
+    let Some(window) = handle.get_webview_window("main") else {
+        return;
+    };
     let _ = window.navigate(url);
     let _ = window.show();
     let _ = window.set_focus();
@@ -172,6 +220,15 @@ fn main() {
                 .on_navigation(move |url| {
                     if is_sign_in(url) {
                         sign_in_in_browser(&nav_handle, url);
+                        return false;
+                    }
+                    if is_provider_sign_in(url) {
+                        connect_in_browser(&nav_handle, url);
+                        return false;
+                    }
+                    if is_aegis(url) {
+                        open_in_browser(&nav_handle, url);
+                        show_waiting(&nav_handle, "signin", url);
                         return false;
                     }
                     true
