@@ -13,6 +13,7 @@ import { useOrganizerStatus } from "@/hooks/useOrganizerStatus";
 import { useSystemEventPoller } from "@/hooks/useSystemEventPoller";
 import { canSendAs, useMe } from "@/hooks/useMe";
 import { ClaimMailbox } from "@/components/ClaimMailbox";
+import { ConnectionAlert } from "@/components/ConnectionAlert";
 import { ComposeProvider, useCompose } from "./Compose";
 import { setAppBadge } from "../lib/badge";
 
@@ -374,6 +375,7 @@ function LayoutShell() {
           <img src="/missive.svg" alt="" className="w-6 h-6" />
           <span className="text-sm font-semibold">Missive</span>
         </div>
+        <ConnectionAlert />
         {/* Organizer activity indicator */}
         {organizerRunning && (
           <div className="absolute top-0 left-0 right-0 z-50 h-[2px] overflow-hidden">
