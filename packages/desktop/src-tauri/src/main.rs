@@ -3,7 +3,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::webview::NewWindowResponse;
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::{RunEvent, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -247,12 +249,16 @@ fn main() {
             Ok(())
         })
         // Closing the window hides it, so Missive keeps checking for mail and
-        // notifying; the Dock icon brings it back, Cmd+Q quits.
+        // notifying; the Dock icon brings it back, Cmd+Q quits. Windows has no
+        // Dock (and Missive no tray icon) to bring it back, so there it quits.
         .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
         })
         .build(tauri::generate_context!())
         .expect("error while building Missive");

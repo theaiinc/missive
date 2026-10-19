@@ -1,0 +1,107 @@
+# Builds Missive for Windows as an unsigned .msix for the Microsoft Store
+# (the Store re-signs it, so no certificate or secrets are needed).
+# Identity values come from repository variables; see
+# packages/desktop/windows/msix/README.md. The defaults below only let CI
+# produce a test package; Partner Center rejects them.
+name: MSIX (Microsoft Store)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/msix-store]
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    env:
+      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME || 'TheAITechnology.Missive' }}
+      MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER || 'CN=00000000-0000-0000-0000-000000000000' }}
+      MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME || 'THE AI TECHNOLOGY COMPANY LIMITED' }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri
+
+      # Only the desktop package's deps (the Tauri CLI); the rest of the
+      # workspace isn't needed to build the app.
+      - name: Install
+        run: pnpm install --frozen-lockfile --filter @theaiinc/missive-desktop
+
+      # The window loads the live site; the "frontend" is the committed
+      # placeholder in packages/desktop/static (build.frontendDist), which
+      # needs no build step.
+      - name: Check frontendDist
+        run: |
+          if (-not (Test-Path packages/desktop/static/index.html)) { throw "packages/desktop/static/index.html missing" }
+
+      - name: Build Missive.exe
+        working-directory: packages/desktop
+        run: pnpm tauri build --no-bundle --target x86_64-pc-windows-msvc --config src-tauri/tauri.microsoftstore.conf.json
+
+      - name: Stage msix-layout
+        working-directory: packages/desktop
+        run: |
+          $release = "src-tauri/target/x86_64-pc-windows-msvc/release"
+          # mainBinaryName (tauri.microsoftstore.conf.json) names it Missive.exe;
+          # fall back to the Cargo name in case the CLI didn't rename it.
+          $exe = @("$release/Missive.exe", "$release/missive-desktop.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { Get-ChildItem $release; throw "No release exe found in $release" }
+
+          $layout = "msix-layout"
+          if (Test-Path $layout) { Remove-Item $layout -Recurse -Force }
+          New-Item -ItemType Directory -Path "$layout/Assets" | Out-Null
+          Copy-Item $exe "$layout/Missive.exe"
+          Copy-Item windows/msix/Assets/* "$layout/Assets/"
+
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "tauri.conf.json version '$version' isn't x.y.z" }
+          $msixVersion = "$version.0"
+
+          $manifest = Get-Content windows/msix/Package.appxmanifest -Raw
+          $manifest = $manifest.Replace('__MSIX_IDENTITY_NAME__', $env:MSIX_IDENTITY_NAME)
+          $manifest = $manifest.Replace('__MSIX_PUBLISHER_DISPLAY_NAME__', [System.Security.SecurityElement]::Escape($env:MSIX_PUBLISHER_DISPLAY_NAME))
+          $manifest = $manifest.Replace('__MSIX_PUBLISHER__', [System.Security.SecurityElement]::Escape($env:MSIX_PUBLISHER))
+          $manifest = $manifest.Replace('__MSIX_VERSION__', $msixVersion)
+          if ($manifest -match '__MSIX_[A-Z_]+__') { throw "Unfilled placeholder: $($Matches[0])" }
+          [xml]$manifest | Out-Null
+          Set-Content -Path "$layout/AppxManifest.xml" -Value $manifest -Encoding utf8NoBOM
+
+          "MSIX_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-ChildItem $layout -Recurse | Select-Object FullName, Length
+
+      - name: Pack .msix
+        working-directory: packages/desktop
+        run: |
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" |
+            Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0' } } -Descending | Select-Object -First 1
+          if (-not $makeappx) { throw "makeappx.exe not found in the Windows SDK" }
+          Write-Host "Using $($makeappx.FullName)"
+          $out = "Missive_${env:MSIX_VERSION}_x64.msix"
+          & $makeappx.FullName pack /d msix-layout /p $out /o
+          if ($LASTEXITCODE -ne 0) { throw "makeappx failed ($LASTEXITCODE)" }
+          "MSIX_FILE=packages/desktop/$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Missive_${{ env.MSIX_VERSION }}_x64_msix
+          path: ${{ env.MSIX_FILE }}
+          if-no-files-found: error
