@@ -164,7 +164,8 @@ export class StorageService {
   async listAttachments(missiveIds: string[]): Promise<(AttachmentInfo & { missiveId: string })[]> {
     if (!missiveIds.length) return [];
     const { rows } = await this.pg.query(
-      `SELECT id, missive_id, filename, mime_type, size FROM attachments WHERE missive_id = ANY($1) ORDER BY id`,
+      // owner_id: openRows needs it to pick the key for the encrypted file names.
+      `SELECT id, owner_id, missive_id, filename, mime_type, size FROM attachments WHERE missive_id = ANY($1) ORDER BY id`,
       [missiveIds],
     );
     return (await openRows('attachments', rows)).map((r) => ({
