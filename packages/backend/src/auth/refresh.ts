@@ -8,7 +8,8 @@ import {
 import type { Site } from "./sites";
 
 /**
- * Staying signed in. The sign-in asks Aegis for offline_access and keeps the
+ * Staying signed in. The sign-in asks Aegis for offline_access (with
+ * prompt=consent, which Aegis requires for it; auth.controller.ts) and keeps the
  * refresh token in an encrypted cookie (REFRESH_COOKIE). When the 12-hour
  * session runs out, the auth middleware trades it here for a fresh session,
  * so someone who keeps using Missive stays in until Aegis ends the sign-in
@@ -31,19 +32,41 @@ export async function syncSignIn(users: UsersService, clientId: string, claims: 
 
 export type Refreshed = { userId: string; cookies: string[] } | { clear: true } | null;
 
+/** How long one refresh's result answers the other requests that carried the same cookie. */
+const SHARED_MS = 30_000;
+const recent = new Map<string, { at: number; result: Promise<Refreshed> }>();
+
 /**
  * A fresh session from the refresh cookie, with the cookies to set. Null when
  * there's nothing to do or Aegis is unavailable (try again next request);
  * { clear: true } when the sign-in is over and the cookie should go.
+ *
+ * A page whose session ran out sends several requests at once, all with the
+ * same refresh token. They share one refresh: separately, a rotated token
+ * would be refused for all but the first, and those answers would clear the
+ * cookie the first had just renewed (signing the person out).
  */
-export async function refreshSession(
+export function refreshSession(
   cookieHeader: string | undefined,
   site: Site,
   users: UsersService,
   fetchImpl: typeof fetch = (input, init) => fetch(input, init),
 ): Promise<Refreshed> {
   const raw = readCookie(cookieHeader, REFRESH_COOKIE);
-  if (!raw) return null;
+  if (!raw) return Promise.resolve(null);
+  const now = Date.now();
+  for (const [k, v] of recent) if (now - v.at > SHARED_MS) recent.delete(k);
+  const key = `${site.clientId}|${raw}`;
+  const shared = recent.get(key);
+  if (shared) return shared.result;
+  const result = refreshOnce(raw, site, users, fetchImpl);
+  recent.set(key, { at: now, result });
+  // Aegis unreachable: let the next request try again rather than reuse that.
+  void result.then((r) => { if (r === null) recent.delete(key); }, () => recent.delete(key));
+  return result;
+}
+
+async function refreshOnce(raw: string, site: Site, users: UsersService, fetchImpl: typeof fetch): Promise<Refreshed> {
   const saved = decrypt<SavedRefresh>(raw);
   // Another site's sign-in (each site is its own Aegis client) or a broken cookie.
   if (!saved || saved.clientId !== site.clientId) return { clear: true };
