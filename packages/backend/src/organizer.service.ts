@@ -73,17 +73,15 @@ export class OrganizerService {
     if (this._isRunning) return 0;
     this._isRunning = true;
     try {
-      // Find missives without classification, or those classified as "other" that never got folder-mapped
+      // Mail not classified yet. ("other" is a result too: it stays in the inbox,
+      // and asking again would only spend the model's allowance on it each run.)
       // ORGANIZER_SINCE (an ISO date) leaves mail from before the organizer
       // was switched on where it is, rather than re-filing a whole backlog.
       const since = organizerSince();
       const { rows } = await this.pg.query(
         `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE channel = 'email'
          AND filed_by_user_at IS NULL AND ruled_at IS NULL
-         AND (
-           (classification IS NULL OR classification = '')
-           OR (classification = 'other' AND folder = 'inbox')
-         )
+         AND (classification IS NULL OR classification = '')
          AND ($2::timestamptz IS NULL OR received_at >= $2::timestamptz)
          ORDER BY received_at DESC LIMIT $1`,
         [Math.min(limit, BATCH_SIZE), since]
@@ -116,7 +114,7 @@ export class OrganizerService {
       const { rows: orphaned } = await this.pg.query(
         `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives
          WHERE classification IS NOT NULL AND classification != '' AND folder = 'inbox' AND filed_by_user_at IS NULL AND ruled_at IS NULL
-         AND classification IN ('invoice', 'complaint', 'lead', 'support', 'personal', 'newsletter', 'meeting', 'spam', 'other')
+         AND classification IN ('invoice', 'support', 'personal', 'newsletter', 'spam')
          LIMIT $1`,
         [limit]
       );
@@ -272,24 +270,28 @@ export class OrganizerService {
       )
       .join("\n");
 
-    const prompt = `You are an email classifier. Analyze each email and classify it.
+    const prompt = `You are an email classifier. Label each email below.
 
 Emails:
 ${emailList}
 
-For each email, respond with a line like:
-IDX0 classification=folder|reason
-IDX1 classification=folder|reason
+Answer with exactly one line per email, nothing else, in this form:
+IDX<n>|<label>|<folder>|<short reason>
 
-Where classification is one of: invoice, support, newsletter, notification, meeting, personal, spam, other
-And folder is one of: inbox, invoices, complaints, leads, support, personal, archived, spam
+<label> is one of: ${LABELS.join(", ")}
+<folder> is one of: ${FOLDERS.join(", ")}
 
-If the email is an invoice, set folder=invoices. If it's a support request, set folder=support. If it's a lead, set folder=leads. If it's personal, set folder=personal. For spam, set folder=spam. For newsletters/meetings/other, set folder=archived. For notifications, set folder=inbox — notifications (e.g. from GitHub, Jira, CI tools) can be actionable and should stay in the inbox.
+- Mail from a person, or that needs a reply or an action: label personal, support or other, folder inbox (or leads for a sales lead, complaints for a complaint).
+- Automated notifications (GitHub, CI, security alerts, Jira): label notification, folder inbox.
+- Meeting invitations: label meeting, folder inbox.
+- Newsletters, marketing and promotions: label newsletter, folder archived.
+- Invoices and receipts: label invoice, folder invoices. Spam: label spam, folder spam.
+- When unsure, folder inbox.
 
 Example:
-IDX0 newsletter=archived|weekly newsletter
-IDX1 invoice=invoices|payment receipt
-IDX2 support=support|customer refund request`;
+IDX0|newsletter|archived|weekly product newsletter
+IDX1|invoice|invoices|payment receipt
+IDX2|other|inbox|a colleague asking for a review`;
 
     try {
       const response = await fetch(
@@ -318,6 +320,7 @@ IDX2 support=support|customer refund request`;
       const rawText = data.choices?.[0]?.message?.content ?? "";
 
       // ── Reconstruct classifications from raw text, don't trust JSON ──
+      const parsed = parseClassifications(rawText, rows.length);
       const results = rows.map((r, i) => {
         const fallback: ClassifyResult & { missiveId: string; threadId: string } = {
           missiveId: r.id,
@@ -325,33 +328,11 @@ IDX2 support=support|customer refund request`;
           classification: "other",
           folder: null,
         };
+        const answer = parsed[i];
+        if (answer) return { ...fallback, ...answer };
 
-        // Try to extract our structured line format
-        const lines = rawText.split("\n");
-        const line = lines.find((l: string) => l.startsWith(`IDX${i}`));
-        if (line) {
-          const parts = line.split(/[=|\|]/);
-          if (parts.length >= 2) {
-            // parts[0] = "IDX0 invoice", parts[1] = "invoices", parts[2] = "reason"
-            const clsMatch = parts[0]?.match(/IDX\d+\s+(\w+)/);
-            if (clsMatch) {
-              const cls = clsMatch[1].trim().toLowerCase();
-              const valid = ["invoice", "support", "newsletter", "notification", "meeting", "personal", "spam", "other"];
-              if (valid.includes(cls)) {
-                fallback.classification = cls;
-              }
-            }
-            const f = parts[1]?.trim().toLowerCase();
-            const validFolders = ["inbox", "invoices", "complaints", "leads", "support", "personal", "archived", "spam"];
-            if (validFolders.includes(f)) {
-              fallback.folder = f;
-            }
-          }
-          return fallback;
-        }
-
-        // Try to find any mention of a known classification near this index in the text
-        const valid = ["invoice", "support", "newsletter", "notification", "meeting", "personal", "spam", "other"];
+        // No answer for this one: guess from the subject, else it stays in the inbox.
+        const valid = LABELS;
         const subjectLower = (r.subject ?? "").toLowerCase();
         for (const cls of valid) {
           if (subjectLower.includes(cls)) {
@@ -402,11 +383,7 @@ IDX2 support=support|customer refund request`;
       [result.classification, missiveId]
     );
 
-    // Map classification to actual folder
-    const classificationFolder = classificationToFolder(result.classification);
-
-    // Move to folder: prefer the mapped folder from classification, fall back to AI's suggestion
-    const targetFolder = result.folder ?? classificationFolder;
+    const targetFolder = folderFor(result.classification, result.folder);
     if (!move) {
       await this.pg.query("UPDATE missives SET ruled_at = NOW() WHERE id = $1", [missiveId]);
     } else if (targetFolder && targetFolder !== "inbox") {
@@ -553,6 +530,46 @@ function rowToDigest(row: any): Digest {
   };
 }
 
+/** What the model may call a message, and the folders it may suggest. */
+const LABELS = ["invoice", "support", "newsletter", "notification", "meeting", "personal", "spam", "other"];
+const FOLDERS = ["inbox", "invoices", "complaints", "leads", "support", "personal", "archived", "spam"];
+
+/**
+ * The model's answer for each message (index = position in the batch), or
+ * null when there's no readable line for it. Models don't keep to the format:
+ * they write "IDX0:" or "**IDX0**", copy the example's words
+ * ("classification=spam|..."), or put the label where the folder goes. So
+ * this takes the first known label on the line and the first known folder
+ * after it; "IDX1" never matches "IDX10".
+ */
+export function parseClassifications(text: string, count: number): ({ classification: string; folder: string | null } | null)[] {
+  const answers: ({ classification: string; folder: string | null } | null)[] = Array.from({ length: count }, () => null);
+  for (const line of text.split("\n")) {
+    const m = /IDX\s*(\d+)(?!\d)/i.exec(line);
+    if (!m) continue;
+    const i = Number(m[1]);
+    if (i >= count || answers[i]) continue;
+    const words = (line.slice(m.index + m[0].length).toLowerCase().match(/[a-z]+/g) ?? []);
+    const at = words.findIndex((w) => LABELS.includes(w));
+    if (at < 0) continue;
+    const folder = words.slice(at + 1).find((w) => FOLDERS.includes(w)) ?? null;
+    answers[i] = { classification: words[at]!, folder };
+  }
+  return answers;
+}
+
+/**
+ * Where a labelled message goes. Only clear cases leave the inbox; mail the
+ * model calls "other", notifications and meeting invitations stay, since
+ * filing them away hides mail the person needs (from Sep 25, 2026 every
+ * message was read as "other" and archived). Leads and complaints have no
+ * label of their own, so the model's folder decides those.
+ */
+export function folderFor(classification: string, suggested: string | null): string {
+  if (suggested === "leads" || suggested === "complaints") return suggested;
+  return classificationToFolder(classification) ?? "inbox";
+}
+
 /** Map a classification string to a folder slug */
 function classificationToFolder(classification: string): string | null {
   const map: Record<string, string> = {
@@ -563,9 +580,9 @@ function classificationToFolder(classification: string): string | null {
     personal: "personal",
     notification: "inbox",
     newsletter: "archived",
-    meeting: "archived",
+    meeting: "inbox",
     spam: "spam",
-    other: "archived",
+    other: "inbox",
   };
   return map[classification?.toLowerCase()] ?? null;
 }
