@@ -1,4 +1,5 @@
 import { safeError } from "./log-safe";
+import { fromParsedMail } from "./attachments";
 import { Injectable } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
@@ -246,6 +247,7 @@ export class ImapSyncService {
           };
 
           await this.storage.saveMissive(missive);
+          await this.storage.saveAttachments(missive.id, fromParsedMail(parsed));
           if (!isNew) continue;
 
           // Apply rules

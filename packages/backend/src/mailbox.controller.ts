@@ -3,6 +3,7 @@ import type { Request } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { MailboxService, SendError, textToHtml } from "./mailbox.service";
 import { GmailSendError, GmailSendService } from "./gmail-send.service";
+import type { IncomingAttachment } from "./storage/storage.service";
 import { UsersService } from "./users.service";
 import { GroupsService } from "./groups.service";
 import { requireUser, runAsUser } from "./request-context";
@@ -113,6 +114,7 @@ export class MailboxController {
     if (to.length + cc.length + bcc.length > 50) problems.push("Send to 50 people or fewer at a time.");
     if (!subject) problems.push("Add a subject.");
     if (!text.trim()) problems.push("Write a message.");
+    const attachments = parseAttachments(body.attachments, problems);
     if (problems.length) throw new BadRequestException(problems.join(" "));
     // From a connected Gmail account: through Gmail, in the original's Gmail thread.
     if (await this.gmail.account(body.from as string)) {
@@ -127,6 +129,7 @@ export class MailboxController {
           html: textToHtml(text),
           replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
           readReceipt: body.readReceipt === true,
+          attachments,
         });
         return { id: missive.id, threadId: missive.threadId };
       } catch (error) {
@@ -144,6 +147,7 @@ export class MailboxController {
         text,
         replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
         readReceipt: body.readReceipt === true,
+        attachments,
       });
       return { id: missive.id, threadId: missive.threadId };
     } catch (error) {
@@ -151,4 +155,27 @@ export class MailboxController {
       throw error;
     }
   }
+}
+
+/** Room left for the message itself under Gmail's and Cloudflare's 25 MB per message. */
+const MAX_SEND_BYTES = 24 * 1024 * 1024;
+
+/** Compose's files ({ filename, mimeType, content: base64 }); problems the person can fix go into `problems`. */
+function parseAttachments(value: unknown, problems: string[]): IncomingAttachment[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 20) {
+    problems.push("Attach 20 files or fewer.");
+    return [];
+  }
+  const files = value.map((v) => {
+    const f = (v ?? {}) as Record<string, unknown>;
+    return {
+      filename: typeof f.filename === "string" && f.filename.trim() ? f.filename.trim().slice(0, 200) : "attachment",
+      mimeType: typeof f.mimeType === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(f.mimeType) ? f.mimeType : "application/octet-stream",
+      content: Buffer.from(typeof f.content === "string" ? f.content : "", "base64"),
+    };
+  });
+  if (files.some((f) => !f.content.length)) problems.push("An attachment couldn't be read; attach it again.");
+  if (files.reduce((n, f) => n + f.content.length, 0) > MAX_SEND_BYTES) problems.push("Attachments can be 24 MB in all.");
+  return files;
 }

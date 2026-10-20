@@ -52,6 +52,7 @@ function setup() {
     },
     missiveExists: async (id: string) => missives.has(id),
     saveMissive: async (m: any) => void missives.set(m.id, structuredClone(m)),
+    saveAttachments: async () => {},
     getThread: async (id: string) => (threads.has(id) ? structuredClone(threads.get(id)) : undefined),
     saveThread: async (t: any) => void threads.set(t.id, structuredClone(t)),
   };

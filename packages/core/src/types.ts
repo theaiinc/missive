@@ -86,14 +86,14 @@ export const MissiveSchema = z.object({
       })
     )
     .optional(),
+  /** Files on the message (kept by the backend; content at /api/v1/attachments/:id). */
   attachments: z
     .array(
       z.object({
-        id: z.string().ulid(),
+        id: z.string(),
         filename: z.string(),
         mimeType: z.string(),
         size: z.number(),
-        storagePath: z.string().optional(),
       })
     )
     .optional(),

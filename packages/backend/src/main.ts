@@ -17,6 +17,8 @@ async function bootstrap() {
   app.useBodyParser("raw", { type: "message/rfc822", limit: "40mb" });
   // Calendar imports arrive as the .ics file itself (see CalendarController.importIcs).
   app.useBodyParser("text", { type: "text/calendar", limit: "10mb" });
+  // Sending carries its attachments as base64 (up to 25 MB of files, ~34 MB encoded).
+  app.useBodyParser("json", { limit: "40mb" });
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN ?? "http://localhost:5173",

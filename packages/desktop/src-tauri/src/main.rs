@@ -2,7 +2,10 @@
 // icon. Nothing is served locally; sign-in, mail and settings are the web app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::webview::NewWindowResponse;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
@@ -41,6 +44,33 @@ fn is_provider_sign_in(url: &Url) -> bool {
 
 // Aegis's own pages (sign-in, two-step, passkeys) as well, except signing out,
 // which has to clear this window's Aegis session.
+// A message's file (web/src/components/Attachments.tsx). The browser isn't
+// signed in to Missive, so these stay in the app: downloaded, then opened
+// with their usual app ("open"), or shown in Finder ("save").
+fn is_attachment(url: &Url) -> bool {
+    url.scheme() == "https" && url.host_str() == Some("missive.theaiinc.com") && url.path().starts_with("/api/v1/attachments/")
+}
+
+/// Downloads in flight: where each one goes and whether to open it when done.
+static DOWNLOADS: Mutex<Vec<(String, PathBuf, bool)>> = Mutex::new(Vec::new());
+
+/// `name` in ~/Downloads, as "name (1).ext" and so on if it's taken.
+fn free_download_path(name: &str) -> PathBuf {
+    let dir = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Downloads");
+    let name = Path::new(name).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "attachment".into());
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let mut path = dir.join(&name);
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("{stem} ({n}){ext}"));
+        n += 1;
+    }
+    path
+}
+
 fn is_aegis(url: &Url) -> bool {
     url.scheme() == "https" && url.host_str() == Some(AEGIS) && url.path() != "/session/end"
 }
@@ -234,10 +264,41 @@ fn main() {
                     true
                 })
                 // Links that open a new tab (a message's links, the account page)
-                // go to the default browser rather than a bare window.
+                // go to the default browser rather than a bare window; a picture or
+                // PDF attachment opened that way is downloaded here and opened.
                 .on_new_window(move |url, _features| {
-                    let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    if is_attachment(&url) {
+                        let mut file = url.clone();
+                        file.set_query(Some("open=1"));
+                        if let Some(w) = handle.get_webview_window("main") {
+                            let _ = w.eval(format!("location.assign({:?})", file.as_str()));
+                        }
+                    } else {
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    }
                     NewWindowResponse::Deny
+                })
+                .on_download(move |webview, event| {
+                    match event {
+                        DownloadEvent::Requested { url, destination } => {
+                            let name = destination.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                            *destination = free_download_path(&name);
+                            let open = url.query_pairs().any(|(k, v)| k == "open" && v == "1");
+                            DOWNLOADS.lock().unwrap().push((url.to_string(), destination.clone(), open));
+                        }
+                        DownloadEvent::Finished { url, success, .. } => {
+                            let mut list = DOWNLOADS.lock().unwrap();
+                            if let Some(i) = list.iter().position(|(u, _, _)| *u == url.to_string()) {
+                                let (_, path, open) = list.remove(i);
+                                if success {
+                                    let opener = webview.app_handle().opener();
+                                    let _ = if open { opener.open_path(path.to_string_lossy(), None::<&str>) } else { opener.reveal_item_in_dir(&path) };
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    true
                 })
                 .build()?;
             // Launched by the missive:// link itself.

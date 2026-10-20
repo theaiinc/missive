@@ -29,7 +29,18 @@ type SendRequest = {
   text: string;
   html?: string;
   headers?: Record<string, string>;
+  /** Files, their content base64 (the API's JSON can't carry bytes). */
+  attachments?: { filename: string; type: string; content: string }[];
 };
+
+/** Back to bytes for Cloudflare's send (a string there would be sent as the text itself). */
+const files = (list: SendRequest["attachments"]): EmailAttachment[] =>
+  (list ?? []).map((f) => ({
+    disposition: "attachment",
+    filename: f.filename,
+    type: f.type,
+    content: Uint8Array.from(atob(f.content), (c) => c.charCodeAt(0)),
+  }));
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -60,6 +71,7 @@ export default {
         text: mail.text,
         ...(mail.html ? { html: mail.html } : {}),
         ...(mail.headers && Object.keys(mail.headers).length ? { headers: mail.headers } : {}),
+        ...(mail.attachments?.length ? { attachments: files(mail.attachments) } : {}),
       });
       return json({ messageId: result.messageId });
     } catch (error) {
