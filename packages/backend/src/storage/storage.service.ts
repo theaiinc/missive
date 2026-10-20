@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { PostgresService } from './postgres.service';
 import { openRow, openRows, seal, sealJson } from './content-crypto';
 import type {
@@ -20,6 +21,12 @@ import type {
 export const NO_CONTENT_BODY = '(no content)';
 /** Longest a sealed "(no content)" can be; longer bodies are real ones. */
 const PLACEHOLDER_BODY_MAX_BYTES = 512;
+
+/** A file on a message as it arrives (from a provider, or attached in Compose). */
+export type IncomingAttachment = { filename: string; mimeType: string; content: Buffer };
+export type AttachmentInfo = { id: string; filename: string; mimeType: string; size: number };
+/** Larger files aren't kept (Gmail and Cloudflare cap a whole message at 25 MB). */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export const MISSIVE_LIST_COLUMNS = `id, thread_id, channel, direction, provider, provider_message_id,
   subject, body, summary, sender_name, sender_address, recipients, cc, bcc, attachments,
@@ -119,7 +126,58 @@ export class StorageService {
       `SELECT * FROM missives WHERE thread_id = $1 ORDER BY received_at DESC`,
       [threadId],
     );
-    return (await openRows('missives', rows)).map(rowToMissive);
+    const missives = (await openRows('missives', rows)).map(rowToMissive);
+    const files = await this.listAttachments(missives.map((m) => m.id));
+    for (const m of missives) {
+      const own = files.filter((f) => f.missiveId === m.id).map(({ missiveId: _, ...f }) => f);
+      if (own.length) m.attachments = own;
+    }
+    return missives;
+  }
+
+  // ── Attachments (migration 031) ──
+
+  /**
+   * Keeps a message's files. Ids come from the message, position and name, so
+   * syncing the same message again stores nothing new.
+   */
+  async saveAttachments(missiveId: string, files: IncomingAttachment[]): Promise<void> {
+    for (const [i, f] of files.entries()) {
+      if (f.content.length > MAX_ATTACHMENT_BYTES) continue;
+      const id = `a_${createHash('sha256').update(`${missiveId}|${i}|${f.filename}`).digest('hex').slice(0, 26)}`;
+      await this.pg.query(
+        `INSERT INTO attachments (id, missive_id, filename, mime_type, size, content)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (owner_id, id) DO NOTHING`,
+        [
+          id,
+          missiveId,
+          await seal('attachments', 'filename', f.filename || 'attachment'),
+          f.mimeType || 'application/octet-stream',
+          f.content.length,
+          await seal('attachments', 'content', f.content.toString('base64')),
+        ],
+      );
+    }
+  }
+
+  /** The files on these messages, without their content. */
+  async listAttachments(missiveIds: string[]): Promise<(AttachmentInfo & { missiveId: string })[]> {
+    if (!missiveIds.length) return [];
+    const { rows } = await this.pg.query(
+      `SELECT id, missive_id, filename, mime_type, size FROM attachments WHERE missive_id = ANY($1) ORDER BY id`,
+      [missiveIds],
+    );
+    return (await openRows('attachments', rows)).map((r) => ({
+      id: r.id, missiveId: r.missive_id, filename: r.filename, mimeType: r.mime_type, size: r.size,
+    }));
+  }
+
+  /** One file with its content, or null when it isn't the current user's. */
+  async getAttachment(id: string): Promise<(AttachmentInfo & { missiveId: string; content: Buffer }) | null> {
+    const { rows } = await this.pg.query(`SELECT * FROM attachments WHERE id = $1`, [id]);
+    if (!rows.length) return null;
+    const r = await openRow('attachments', rows[0]);
+    return { id: r.id, missiveId: r.missive_id, filename: r.filename, mimeType: r.mime_type, size: r.size, content: Buffer.from(r.content, 'base64') };
   }
 
   async getRecentMissives(since: string, limit = 10): Promise<Missive[]> {

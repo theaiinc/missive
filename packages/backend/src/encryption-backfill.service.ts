@@ -40,7 +40,8 @@ export class EncryptionBackfillService implements OnApplicationBootstrap {
     // the container's health check) isn't held up. Reads handle both
     // encrypted and not-yet-encrypted rows meanwhile.
     void (async () => {
-      for (const table of Object.keys(ENCRYPTED_COLUMNS) as EncryptedTable[]) await this.content(table);
+      // attachments has only ever been written encrypted: scanning its content would read every file.
+      for (const table of Object.keys(ENCRYPTED_COLUMNS) as EncryptedTable[]) if (table !== "attachments") await this.content(table);
     })().catch((err) => this.log.error(`content backfill stopped: ${safeError(err)}`));
   }
 

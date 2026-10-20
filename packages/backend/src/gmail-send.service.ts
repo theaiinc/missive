@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { google } from "googleapis";
 import type { Missive } from "@theaiinc/missive-core";
 import { ConnectorStore } from "./connector.store";
-import { StorageService } from "./storage/storage.service";
+import { StorageService, type IncomingAttachment } from "./storage/storage.service";
 import { requireUser } from "./request-context";
 import { parseAddressList, type Address } from "./addresses";
 
@@ -16,6 +16,7 @@ export interface GmailOutgoing {
   html: string;
   replyTo?: string;
   readReceipt?: boolean;
+  attachments?: IncomingAttachment[];
 }
 
 export class GmailSendError extends Error {}
@@ -41,11 +42,36 @@ export function buildMime(m: GmailOutgoing & { fromName?: string; inReplyTo?: st
     ...(m.references ? [`References: ${m.references}`] : []),
     ...(m.readReceipt ? [`Disposition-Notification-To: ${m.from}`] : []),
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
   const part = (type: string, body: string) =>
     [`--${boundary}`, `Content-Type: ${type}; charset="UTF-8"`, "Content-Transfer-Encoding: base64", "", wrap76(Buffer.from(body, "utf8").toString("base64"))].join("\r\n");
-  return [...headers, "", part("text/plain", m.text), part("text/html", m.html), `--${boundary}--`, ""].join("\r\n");
+  const alternative = [part("text/plain", m.text), part("text/html", m.html), `--${boundary}--`].join("\r\n");
+  if (!m.attachments?.length) return [...headers, `Content-Type: multipart/alternative; boundary="${boundary}"`, "", alternative, ""].join("\r\n");
+  // With files: multipart/mixed around the text and HTML, then one part per file.
+  const mixed = `${boundary}-mixed`;
+  const files = m.attachments.map((f) => {
+    const name = encodeHeader(f.filename.replace(/["\r\n\\]/g, "_"));
+    return [
+      `--${mixed}`,
+      `Content-Type: ${f.mimeType.replace(/[\r\n;]/g, "")}; name="${name}"`,
+      `Content-Disposition: attachment; filename="${name}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      wrap76(f.content.toString("base64")),
+    ].join("\r\n");
+  });
+  return [
+    ...headers,
+    `Content-Type: multipart/mixed; boundary="${mixed}"`,
+    "",
+    `--${mixed}`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    alternative,
+    ...files,
+    `--${mixed}--`,
+    "",
+  ].join("\r\n");
 }
 
 /**
@@ -199,6 +225,8 @@ export class GmailSendService {
       await this.storage.saveThread(thread);
     }
     await this.storage.saveMissive(missive);
+    // Your sent copy keeps its files, as received mail does.
+    if (mail.attachments?.length) await this.storage.saveAttachments(missive.id, mail.attachments);
     if (!thread.missiveIds.includes(id)) thread.missiveIds.push(id);
     thread.messageCount = thread.missiveIds.length;
     thread.lastActivityAt = now;

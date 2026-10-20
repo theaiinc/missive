@@ -17,6 +17,8 @@ export interface StoredConnector {
   /** 'active', or 'needs_reauth' once the provider has refused the stored refresh token. */
   status?: string;
   lastError?: string | null;
+  /** When mail synced before attachments were kept got its files (SyncService.backfillAttachments). */
+  attachmentsBackfilledAt?: string | null;
 }
 
 /** The provider refused the stored refresh token; the person has to reconnect the account. */
@@ -434,6 +436,10 @@ export class ConnectorStore {
     await this.pg.query("DELETE FROM connectors WHERE id = $1", [id]);
   }
 
+  async markAttachmentsBackfilled(id: string): Promise<void> {
+    await this.pg.query("UPDATE connectors SET attachments_backfilled_at = NOW() WHERE id = $1", [id]);
+  }
+
   async updateLastSyncAt(id: string): Promise<void> {
     await this.pg.query(
       "UPDATE connectors SET last_sync_at = NOW() WHERE id = $1",
@@ -467,5 +473,6 @@ async function rowToConnector(row: any): Promise<StoredConnector> {
       : null,
     status: row.status ?? "active",
     lastError: row.last_error ?? null,
+    attachmentsBackfilledAt: row.attachments_backfilled_at ? new Date(row.attachments_backfilled_at).toISOString() : null,
   };
 }

@@ -92,6 +92,13 @@ export class SyncScheduler implements OnModuleInit {
       this.logger.error("Auto-sync Outlook error:", safeError(err));
     }
 
+    // Files on mail synced before attachments were kept, once per account.
+    try {
+      await this.sync.backfillAttachments();
+    } catch (err) {
+      this.logger.error("Attachments backfill error:", safeError(err));
+    }
+
     // Calendars: .ics subscriptions and connected accounts, each only when due.
     try {
       await this.calendar.refreshDue();

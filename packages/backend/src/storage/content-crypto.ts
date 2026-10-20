@@ -24,6 +24,8 @@ export const ENCRYPTED_COLUMNS = {
   calendar_events: ["summary", "description", "location", "organizer", "attendees", "url"],
   push_subscriptions: ["subscription"],
   signatures: ["text"],
+  // Written encrypted from the start, so the startup backfill skips it (its content is large).
+  attachments: ["filename", "content"],
 } as const;
 
 export type EncryptedTable = keyof typeof ENCRYPTED_COLUMNS;

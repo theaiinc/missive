@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, ImageOff, MailOpen, Reply } from "lucide-react";
 import { useCompose } from "@/components/Compose";
+import { Attachments } from "@/components/Attachments";
 import { useMe, useSenders } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
@@ -353,6 +354,7 @@ function EmailCard({ missive }: { missive: Missive }) {
           </div>
         )}
       </div>
+      <Attachments files={missive.attachments} />
     </div>
   );
 }

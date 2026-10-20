@@ -2,7 +2,7 @@ import { safeError } from "./log-safe";
 import { Injectable } from "@nestjs/common";
 import { google } from "googleapis";
 import { ConnectorStore, ReauthRequiredError, type StoredConnector } from "./connector.store";
-import { StorageService } from "./storage/storage.service";
+import { MAX_ATTACHMENT_BYTES, StorageService, type IncomingAttachment } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive } from "@theaiinc/missive-core";
@@ -132,6 +132,7 @@ export class SyncService {
     // Decode body from inline data or fetch via attachment API
     let bodyHtml = await this.decodeGmailBody(htmlPart, gmail, msg.id!);
     const textBody = await this.decodeGmailBody(textPart, gmail, msg.id!);
+    const htmlWithCids = bodyHtml;
 
     if (bodyHtml) {
       bodyHtml = await this.inlineCidImages(bodyHtml, parts, gmail, msg.id!);
@@ -193,6 +194,7 @@ export class SyncService {
     };
 
     await this.storage.saveMissive(missive);
+    await this.saveGmailAttachments(gmail, msg.id!, missive.id, parts, htmlWithCids);
     if (!isNew) return "repaired";
 
     // Apply rules to the newly synced missive
@@ -372,6 +374,7 @@ export class SyncService {
           };
 
           await this.storage.saveMissive(missive);
+          if (msg.hasAttachments) await this.saveOutlookAttachments(headers, msg.id, missive.id);
 
           // Apply rules to the newly synced missive
           const ruleActions = await this.rules.evaluate(missive);
@@ -442,6 +445,107 @@ export class SyncService {
   }
 
   /** Resolve cid: references in HTML to inline base64 data URIs */
+  /**
+   * Once per account: the files on mail synced before Missive kept
+   * attachments (up to 200 messages with attachments, the last year's).
+   * Run from the scheduler; a failure leaves the account for next time.
+   */
+  async backfillAttachments(): Promise<void> {
+    for (const c of await this.store.list("gmail")) {
+      if (c.status === "needs_reauth" || c.attachmentsBackfilledAt) continue;
+      try {
+        const oauth2 = this.store.createOAuth2Client();
+        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(c.id) });
+        const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
+        let pageToken: string | undefined;
+        let filled = 0;
+        for (let page = 0; page < 2; page++) {
+          const list = await gmail.users.messages.list({ userId: "me", q: "has:attachment newer_than:1y", maxResults: 100, ...(pageToken ? { pageToken } : {}) });
+          for (const { id } of list.data.messages ?? []) {
+            if (!id || !(await this.storage.missiveExists(id)) || (await this.storage.listAttachments([id])).length) continue;
+            const detail = await gmail.users.messages.get({ userId: "me", id, format: "full" });
+            const parts = flattenParts(detail.data.payload);
+            const html = await this.decodeGmailBody(parts.find((p) => p.mimeType === "text/html"), gmail, id);
+            filled += await this.saveGmailAttachments(gmail, id, id, parts, html);
+          }
+          pageToken = list.data.nextPageToken ?? undefined;
+          if (!pageToken) break;
+        }
+        await this.store.markAttachmentsBackfilled(c.id);
+        if (filled) console.log(`Attachments backfill: ${filled} file(s) for a Gmail account`);
+      } catch (e) {
+        console.error("Gmail attachments backfill error:", safeError(e));
+      }
+    }
+    for (const c of await this.store.list("outlook")) {
+      if (c.status === "needs_reauth" || c.attachmentsBackfilledAt) continue;
+      try {
+        const headers = { Authorization: `Bearer ${await this.store.getValidOutlookToken(c.id)}`, "Content-Type": "application/json" };
+        const res = await fetch("https://graph.microsoft.com/v1.0/me/messages?$filter=hasAttachments eq true&$top=200&$select=id", { headers });
+        if (!res.ok) throw new Error(`Graph API list error: ${res.status}`);
+        let filled = 0;
+        for (const { id } of ((await res.json()) as { value?: { id: string }[] }).value ?? []) {
+          if (!(await this.storage.missiveExists(id)) || (await this.storage.listAttachments([id])).length) continue;
+          filled += await this.saveOutlookAttachments(headers, id, id);
+        }
+        await this.store.markAttachmentsBackfilled(c.id);
+        if (filled) console.log(`Attachments backfill: ${filled} file(s) for an Outlook account`);
+      } catch (e) {
+        console.error("Outlook attachments backfill error:", safeError(e));
+      }
+    }
+  }
+
+  /**
+   * Keeps an Outlook message's files. Inline pictures and attached Outlook
+   * items or links (no contentBytes) aren't files to download.
+   */
+  async saveOutlookAttachments(headers: Record<string, string>, messageId: string, missiveId: string): Promise<number> {
+    try {
+      const res = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`, { headers });
+      if (!res.ok) throw new Error(`Graph API attachments error: ${res.status}`);
+      const { value = [] } = (await res.json()) as { value?: { name?: string; contentType?: string; size?: number; isInline?: boolean; contentBytes?: string }[] };
+      const files: IncomingAttachment[] = value
+        .filter((a) => a.contentBytes && !a.isInline && (a.size ?? 0) <= MAX_ATTACHMENT_BYTES)
+        .map((a) => ({ filename: a.name || "attachment", mimeType: a.contentType || "application/octet-stream", content: Buffer.from(a.contentBytes!, "base64") }));
+      await this.storage.saveAttachments(missiveId, files);
+      return files.length;
+    } catch (e) {
+      console.warn("Outlook attachment fetch error:", safeError(e));
+      return 0;
+    }
+  }
+
+  /**
+   * Keeps a Gmail message's files (attachments.ts for other providers). Parts
+   * the HTML shows through cid: links are inline pictures, not attachments.
+   */
+  async saveGmailAttachments(
+    gmail: ReturnType<typeof google.gmail>,
+    messageId: string,
+    missiveId: string,
+    parts: any[],
+    html: string | undefined,
+  ): Promise<number> {
+    const files: IncomingAttachment[] = [];
+    for (const p of parts) {
+      if (!p.filename || !(p.body?.attachmentId || p.body?.data)) continue;
+      if ((p.body.size ?? 0) > MAX_ATTACHMENT_BYTES) continue;
+      const cid = (p.headers?.find((h: { name?: string }) => h.name?.toLowerCase() === "content-id")?.value ?? "").replace(/^<|>$/g, "");
+      if (cid && html?.includes(`cid:${cid}`)) continue;
+      try {
+        const data = p.body.attachmentId
+          ? (await gmail.users.messages.attachments.get({ userId: "me", messageId, id: p.body.attachmentId })).data.data
+          : p.body.data;
+        if (data) files.push({ filename: p.filename, mimeType: p.mimeType || "application/octet-stream", content: Buffer.from(data, "base64url") });
+      } catch (e) {
+        console.warn("Gmail attachment fetch error:", safeError(e));
+      }
+    }
+    await this.storage.saveAttachments(missiveId, files);
+    return files.length;
+  }
+
   private async inlineCidImages(
     html: string,
     parts: { mimeType: string; body?: { data?: string; attachmentId?: string }; filename?: string; headers?: { name: string; value: string }[] }[],

@@ -5,7 +5,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSenders, useSignature } from "@/hooks/useMe";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Paperclip, Sparkles, X } from "lucide-react";
+import { formatSize } from "@/components/Attachments";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
 export type Draft = { from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; replyTo?: string; fromName?: string };
@@ -28,6 +29,18 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
 
 const label = "text-xs font-medium text-muted-foreground";
 
+/** Gmail and Cloudflare take 25 MB per message; this leaves room for the text (the API checks too). */
+const MAX_FILES_BYTES = 24 * 1024 * 1024;
+
+/** A file as the send API takes it: its content base64. */
+const encode = (file: File) =>
+  new Promise<{ filename: string; mimeType: string; content: string }>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ filename: file.name, mimeType: file.type || "application/octet-stream", content: String(reader.result).split(",", 2)[1] ?? "" });
+    reader.onerror = () => reject(new Error(`Couldn't read ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+
 function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
   const queryClient = useQueryClient();
   const mailboxes = useSenders();
@@ -42,6 +55,19 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [readReceipt, setReadReceipt] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const filesBytes = files.reduce((n, f) => n + f.size, 0);
+  const addFiles = (list: FileList | null) => {
+    if (!list?.length) return;
+    const next = [...files, ...Array.from(list)];
+    if (next.reduce((n, f) => n + f.size, 0) > MAX_FILES_BYTES) {
+      setError("Attachments can be 24 MB in all.");
+      return;
+    }
+    setError(null);
+    setFiles(next);
+  };
   const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
 
   // What follows what you write: your signature for the From address, then a reply's quote.
@@ -108,7 +134,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       const res = await fetch("/api/v1/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...values, replyTo: draft.replyTo, readReceipt }),
+        body: JSON.stringify({ ...values, replyTo: draft.replyTo, readReceipt, attachments: await Promise.all(files.map(encode)) }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message ?? body.error ?? `Not sent (${res.status})`);
@@ -125,7 +151,12 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
 
   return (
     <Dialog open onOpenChange={(isOpen) => !isOpen && !sending && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent
+        className="sm:max-w-2xl"
+        // Files dropped anywhere on the window are attached.
+        onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+        onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); addFiles(e.dataTransfer.files); }}
+      >
         <DialogHeader>
           <DialogTitle>{draft.replyTo ? "Reply" : "New message"}</DialogTitle>
           {mailboxes.length === 0 && (
@@ -211,6 +242,30 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
               className="rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
+          <div className="grid gap-2">
+            {files.length > 0 && (
+              <ul className="flex flex-wrap gap-2" aria-label="Attachments">
+                {files.map((f, i) => (
+                  <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-md border border-border bg-muted/30 pl-2 pr-1 py-1 text-xs max-w-full">
+                    <Paperclip className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate max-w-[14rem]">{f.name}</span>
+                    <span className="text-muted-foreground shrink-0">{formatSize(f.size)}</span>
+                    <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="p-0.5 text-muted-foreground hover:text-foreground" aria-label={`Remove ${f.name}`}>
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => fileInput.current?.click()} disabled={sending}>
+                <Paperclip className="w-3.5 h-3.5 mr-1.5" />
+                Attach files
+              </Button>
+              {files.length > 0 && <span className="text-xs text-muted-foreground">{formatSize(filesBytes)} of 24 MB</span>}
+              <input ref={fileInput} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+            </div>
+          </div>
           <label className="flex items-center gap-2 text-xs text-muted-foreground" title="Asks their mail app to tell you when it's opened. Many apps ignore this, or ask the reader first.">
             <input type="checkbox" checked={readReceipt} onChange={(e) => setReadReceipt(e.target.checked)} className="h-3.5 w-3.5" />
             Request a read receipt

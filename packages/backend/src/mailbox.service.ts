@@ -3,8 +3,9 @@ import { Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { createHash } from "node:crypto";
 import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
+import { fromParsedMail } from "./attachments";
 import type { Missive, Thread } from "@theaiinc/missive-core";
-import { StorageService } from "./storage/storage.service";
+import { StorageService, type IncomingAttachment } from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { UsersService, type Mailbox } from "./users.service";
 import { GroupsService } from "./groups.service";
@@ -33,6 +34,7 @@ export type OutgoingMail = {
   replyTo?: string;
   /** Ask for a read receipt (Disposition-Notification-To); many mail apps ignore it. */
   readReceipt?: boolean;
+  attachments?: IncomingAttachment[];
 };
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 26);
@@ -144,6 +146,7 @@ export class MailboxService {
       updatedAt: now,
     };
     await this.file(missive, root);
+    await this.storage.saveAttachments(missive.id, fromParsedMail(parsed));
 
     const actions = await this.rules.evaluate(missive);
     if (actions.length) await this.rules.applyActions(missive.id, actions);
@@ -193,6 +196,10 @@ export class MailboxService {
         text: mail.text,
         html,
         headers,
+        // base64: the edge turns them back into bytes for Cloudflare's send.
+        ...(mail.attachments?.length
+          ? { attachments: mail.attachments.map((f) => ({ filename: f.filename, type: f.mimeType, content: f.content.toString("base64") })) }
+          : {}),
       }),
     });
     const result = (await response.json().catch(() => ({}))) as { messageId?: string; error?: string };
@@ -223,6 +230,8 @@ export class MailboxService {
       updatedAt: now,
     };
     await this.file(missive, threadRoot);
+    // Your sent copy keeps its files, as received mail does.
+    if (mail.attachments?.length) await this.storage.saveAttachments(missive.id, mail.attachments);
     return missive;
   }
 }
