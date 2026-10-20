@@ -301,6 +301,11 @@ fn main() {
                     true
                 })
                 .build()?;
+            // Debug builds open Web Inspector, to see what the page is doing.
+            #[cfg(debug_assertions)]
+            if let Some(w) = app.get_webview_window("main") {
+                w.open_devtools();
+            }
             // Launched by the missive:// link itself.
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 signed_in(app.handle(), urls);

@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Missive — Communication Intelligence</title>
+    <script>
+      // A page loaded while a deploy rolls out can name script or style files
+      // that aren't served: the server answers with this page instead, the
+      // script fails, and the app shows nothing. Reload once to get a matching
+      // set (main.tsx clears the flag once the app is running).
+      addEventListener("error", function (e) {
+        var t = e.target, url = t && (t.src || t.href);
+        if (!url || !/\/assets\//.test(url)) return;
+        try {
+          if (sessionStorage.getItem("missive-asset-reload")) return;
+          sessionStorage.setItem("missive-asset-reload", "1");
+        } catch (_) { return; }
+        location.reload();
+      }, true);
+    </script>
     <link rel="icon" type="image/svg+xml" href="/missive.svg" />
     <!-- Installable (Add to Home Screen), which iPhone needs for push notifications. -->
     <link rel="manifest" href="/manifest.webmanifest" />
