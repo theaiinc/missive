@@ -17,6 +17,7 @@ import { GmailSendService } from "./gmail-send.service";
 import { SignatureController, SignatureService } from "./signature.service";
 import { ImagesController, ImagesService } from "./images";
 import { AttachmentsController } from "./attachments.controller";
+import { ClientErrorsController } from "./client-errors.controller";
 import { OrganizerService } from "./organizer.service";
 import { DigestController } from "./digest.controller";
 import { SystemEventService } from "./system-event.service";
@@ -39,7 +40,7 @@ import { ApiTokenGrantController } from "./auth/api-token-grant";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController, SignatureController, ImagesController, AttachmentsController],
+  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController, SignatureController, ImagesController, AttachmentsController, ClientErrorsController],
   providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService, GmailSendService, SignatureService, ImagesService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
