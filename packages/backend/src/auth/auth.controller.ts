@@ -89,10 +89,12 @@ export class AuthController {
       // "offline_access": a refresh token, so a session that runs out is renewed
       // while the person keeps using Missive (refresh.ts).
       scope: "openid email profile mailbox admin console offline_access",
-      // "Try again" after a refused sign-in asks Aegis for the login again,
-      // instead of reusing the Aegis session that was just refused. Aegis drops
-      // offline_access under a prompt that doesn't include "consent".
-      ...(req.query.prompt === "login" ? { prompt: "login consent" } : {}),
+      // Aegis (oidc-provider) only keeps offline_access when the prompt includes
+      // "consent", and without it no sign-in got a refresh token: everyone was
+      // signed out after SESSION_HOURS. Aegis approves Missive's consent itself,
+      // so this shows no extra screen. "Try again" after a refused sign-in also
+      // asks for the login again, instead of reusing the Aegis session just refused.
+      prompt: req.query.prompt === "login" ? "login consent" : "consent",
       state: saved.state,
       nonce: saved.nonce,
       code_challenge: pkceChallenge(verifier),

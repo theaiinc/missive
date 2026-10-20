@@ -87,3 +87,42 @@ describe("staying signed in", () => {
     expect(await refreshSession(refreshCookie(), site, users() as never)).toBeNull();
   });
 });
+
+describe("a session that runs out mid-page", () => {
+  it("is renewed once for all the requests that arrive together", async () => {
+    tokenAnswer = { status: 200, body: { id_token: idToken({ sub: "aegis-1", email: "a@b.com", email_verified: true }), refresh_token: "rt-2" } };
+    const cookie = refreshCookie();
+    const u = users();
+    // A rotated token would be refused for every request after the first, and
+    // those answers would clear the cookie the first one had just renewed.
+    const results = await Promise.all([1, 2, 3].map(() => refreshSession(cookie, site, u as never)));
+    expect(sent).toHaveLength(1);
+    for (const r of results) expect(r && !("clear" in r) && r.userId).toBe("user-1");
+  });
+
+  it("asks Aegis again on the next request when it was unavailable", async () => {
+    tokenAnswer = { status: 503, body: {} };
+    const cookie = refreshCookie();
+    expect(await refreshSession(cookie, site, users() as never)).toBeNull();
+    tokenAnswer = { status: 200, body: { id_token: idToken({ sub: "aegis-1", email: "a@b.com", email_verified: true }) } };
+    const again = await refreshSession(cookie, site, users() as never);
+    expect(sent).toHaveLength(2);
+    expect(again && !("clear" in again) && again.userId).toBe("user-1");
+  });
+});
+
+describe("signing in", () => {
+  it("asks Aegis for consent, without which it gives no refresh token", async () => {
+    const { AuthController } = await import("../auth/auth.controller");
+    const login = (query: Record<string, string>) => {
+      let location = "";
+      const res = { setHeader: () => undefined, redirect: (_: number, url: string) => void (location = url) };
+      new AuthController({} as never, {} as never).login({ headers: {}, query } as never, res as never);
+      return new URL(location).searchParams;
+    };
+    const first = login({});
+    expect(first.get("scope")).toContain("offline_access");
+    expect(first.get("prompt")).toBe("consent");
+    expect(login({ prompt: "login" }).get("prompt")).toBe("login consent");
+  });
+});
