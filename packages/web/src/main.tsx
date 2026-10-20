@@ -19,6 +19,9 @@ window.fetch = async (input, init) => {
 
 const queryClient = new QueryClient();
 
+// Running: a later failed load may reload again (index.html).
+try { sessionStorage.removeItem("missive-asset-reload"); } catch { /* storage blocked */ }
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
