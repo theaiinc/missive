@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
+import { reportError } from "@/lib/report-error";
 
 type Props = { children: ReactNode; resetKey: string };
 type State = { error: Error | null };
@@ -18,6 +19,7 @@ class Boundary extends Component<Props, State> {
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Missive couldn't show this page:", error, info.componentStack);
+    reportError("render", error, info.componentStack);
   }
 
   override componentDidUpdate(prev: Props) {

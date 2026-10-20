@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { ErrorScreen } from "./components/ErrorScreen";
+import { reportUncaughtErrors } from "./lib/report-error";
 import { ThemeProvider } from "./hooks/useTheme";
 import "./index.css";
 
@@ -17,6 +18,8 @@ window.fetch = async (input, init) => {
   }
   return res;
 };
+
+reportUncaughtErrors();
 
 const queryClient = new QueryClient();
 
