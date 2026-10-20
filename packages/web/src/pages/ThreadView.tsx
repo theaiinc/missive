@@ -23,9 +23,18 @@ async function fetchThread(
     fetch(`/api/v1/thread/${id}`),
     fetch(`/api/v1/thread/${id}/missives`),
   ]);
+  // An error answer is JSON too: used as the thread, it crashed the page.
+  for (const res of [threadRes, missivesRes]) {
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      throw new Error(body.message ?? body.error ?? `The conversation couldn't be loaded (${res.status}).`);
+    }
+  }
+  const missives: unknown = await missivesRes.json();
+  if (!Array.isArray(missives)) throw new Error("The conversation couldn't be loaded.");
   return {
     thread: await threadRes.json(),
-    missives: await missivesRes.json(),
+    missives: missives as Missive[],
   };
 }
 
@@ -33,7 +42,7 @@ export function ThreadView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { getColor } = useAccountColors();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["thread", id],
     queryFn: () => fetchThread(id!),
     enabled: !!id,
@@ -89,6 +98,19 @@ export function ThreadView() {
             </div>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm font-medium">This conversation couldn't be opened.</p>
+        {error && <p className="text-xs text-muted-foreground max-w-md">{(error as Error).message}</p>}
+        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
+          <ArrowLeft className="w-4 h-4 mr-1.5" />
+          Back
+        </Button>
       </div>
     );
   }
