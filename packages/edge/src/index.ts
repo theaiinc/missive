@@ -232,6 +232,25 @@ async function send(request: Request, env: Env): Promise<Response> {
   }
 }
 
+/**
+ * The API's answer, or what went wrong before it could answer. Errors from
+ * the API itself are JSON with a reason; the containers library answers a
+ * container that's starting, restarting or busy with a plain-text 500, which
+ * the page could only show as "(500)". Those become JSON with the reason, and
+ * go to Workers Logs with the path so they can be traced.
+ */
+async function apiResponse(path: string, result: Response | unknown): Promise<Response> {
+  if (!(result instanceof Response)) {
+    const reason = result instanceof Error ? result.message : String(result);
+    console.error("API unreachable", { path, reason });
+    return json({ error: `Missive's server couldn't be reached (${reason}). Try again in a moment.` }, 503);
+  }
+  if (result.status < 500 || (result.headers.get("content-type") ?? "").includes("application/json")) return result;
+  const text = (await result.text()).slice(0, 300);
+  console.error("API error outside the app", { path, status: result.status, text });
+  return json({ error: `Missive's server had a problem (${result.status}${text ? `: ${text}` : ""}). Try again in a moment.` }, result.status);
+}
+
 export default {
   /**
    * Every minute (wrangler.jsonc triggers): keeps the API container awake, so
@@ -266,7 +285,7 @@ export default {
       // Set here, never taken from the browser: it picks the Aegis client.
       const forwarded = new Request(request);
       forwarded.headers.set(SITE_HEADER, url.host);
-      return api(env).fetch(forwarded);
+      return apiResponse(url.pathname, await api(env).fetch(forwarded).catch((e: unknown) => e));
     }
     return env.ASSETS.fetch(request);
   },
