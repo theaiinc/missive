@@ -16,6 +16,22 @@ import { useAccountColors } from "@/hooks/useAccountColors";
 import { TranslateBar, TranslatedBody, type Translation } from "@/components/Translate";
 import { remoteImageUrls, rewriteImages, signImageUrls } from "@/lib/emailImages";
 
+/** A failed load, with the HTTP status so a server error can be retried. */
+class LoadError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/**
+ * A deploy restarts the API, which answers 5xx for a few minutes meanwhile:
+ * keep trying for about a minute and a half before showing the error.
+ * Other failures (gone, not yours) show at once.
+ */
+const retryServerErrors = (failures: number, error: unknown) =>
+  failures < 8 && (!(error instanceof LoadError) || error.status >= 500);
+const retryDelay = (failures: number) => Math.min(2000 * 2 ** failures, 15_000);
+
 async function fetchThread(
   id: string
 ): Promise<{ thread: Thread; missives: Missive[] }> {
@@ -27,7 +43,7 @@ async function fetchThread(
   for (const res of [threadRes, missivesRes]) {
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
-      throw new Error(body.message ?? body.error ?? `The conversation couldn't be loaded (${res.status}).`);
+      throw new LoadError(body.message ?? body.error ?? `The conversation couldn't be loaded (${res.status}).`, res.status);
     }
   }
   const missives: unknown = await missivesRes.json();
@@ -42,10 +58,12 @@ export function ThreadView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { getColor } = useAccountColors();
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["thread", id],
     queryFn: () => fetchThread(id!),
     enabled: !!id,
+    retry: retryServerErrors,
+    retryDelay,
   });
   const queryClient = useQueryClient();
   const refreshCounts = () => {
@@ -106,11 +124,16 @@ export function ThreadView() {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm font-medium">This conversation couldn't be opened.</p>
-        {error && <p className="text-xs text-muted-foreground max-w-md">{(error as Error).message}</p>}
-        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="w-4 h-4 mr-1.5" />
-          Back
-        </Button>
+        {error instanceof Error && <p className="text-xs text-muted-foreground max-w-md">{error.message}</p>}
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
+            <ArrowLeft className="w-4 h-4 mr-1.5" />
+            Back
+          </Button>
+          <Button size="sm" onClick={() => void refetch()} disabled={isFetching}>
+            {isFetching ? "Trying…" : "Try again"}
+          </Button>
+        </div>
       </div>
     );
   }
