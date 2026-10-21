@@ -467,8 +467,7 @@ function wrapEmailHtml(html: string): string {
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; font-src data:">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark only">
+<meta name="color-scheme" content="light">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -501,14 +500,9 @@ function wrapEmailHtml(html: string): string {
   /* Embedded content */
   video, embed, object { max-width: 100% !important; }
 
-  @media (prefers-color-scheme: dark) {
-    body {
-      color: #e1e1e1;
-      background: #1a1a1a;
-    }
-    a { color: #66b3ff; }
-    blockquote { border-color: #444; color: #999; }
-  }
+  /* Always light, as Gmail and Apple Mail show HTML mail: emails are designed
+     for a light page. A dark default here gave text the email left uncolored a
+     light color, invisible on the white boxes most emails paint. */
 </style>
 </head>
 <body>
