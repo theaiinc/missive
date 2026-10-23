@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Languages, Loader2 } from "lucide-react";
+import { apiJson } from "@/lib/api";
 
 export interface Translation {
   to: string;
@@ -46,7 +47,7 @@ export function TranslateBar({
 }) {
   const { data: languages = [] } = useQuery<Language[]>({
     queryKey: ["translate-languages"],
-    queryFn: () => fetch("/api/v1/translate/languages").then((r) => r.json()),
+    queryFn: () => apiJson("/api/v1/translate/languages"),
     staleTime: Infinity,
   });
   const [to, setTo] = useState<string | null>(null);

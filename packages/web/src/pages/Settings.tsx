@@ -13,6 +13,7 @@ import { useMe, useSenders, useSignature } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import { useAccountColors, colorOptions } from "@/hooks/useAccountColors";
 import { useEntityConfig, ConfigItem } from "@/hooks/useEntityConfig";
+import { apiJson } from "@/lib/api";
 
 interface AccountInfo {
   id: string;
@@ -36,9 +37,8 @@ async function getAuthUrl(provider: string): Promise<string> {
   return data.url;
 }
 
-async function getStatus(provider: string): Promise<ProviderStatus> {
-  const res = await fetch(`/api/v1/connector/${provider}/status`);
-  return res.json();
+function getStatus(provider: string): Promise<ProviderStatus> {
+  return apiJson<ProviderStatus>(`/api/v1/connector/${provider}/status`);
 }
 
 async function syncProvider(provider: string, email?: string): Promise<any> {
@@ -1310,13 +1310,6 @@ function SignInSecurity({ accountUrl, email }: { accountUrl: string; email: stri
       </div>
     </section>
   );
-}
-
-async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
-  return body as T;
 }
 
 /**

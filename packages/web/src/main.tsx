@@ -7,6 +7,7 @@ import { ErrorScreen } from "./components/ErrorScreen";
 import { reportUncaughtErrors } from "./lib/report-error";
 import { ThemeProvider } from "./hooks/useTheme";
 import "./index.css";
+import { retryDelay, retryServerErrors } from "./lib/api";
 
 // Signed out (or the session expired): go through Aegis and come back here.
 const nativeFetch = window.fetch.bind(window);
@@ -21,7 +22,8 @@ window.fetch = async (input, init) => {
 
 reportUncaughtErrors();
 
-const queryClient = new QueryClient();
+// Every load rides out a deploy's restart (lib/api.ts); a mutation's own error shows at once.
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryServerErrors, retryDelay } } });
 
 // Running: a later failed load may reload again (index.html).
 try { sessionStorage.removeItem("missive-asset-reload"); } catch { /* storage blocked */ }

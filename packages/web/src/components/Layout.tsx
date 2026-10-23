@@ -16,6 +16,7 @@ import { ClaimMailbox } from "@/components/ClaimMailbox";
 import { ConnectionAlert } from "@/components/ConnectionAlert";
 import { ComposeProvider, useCompose } from "./Compose";
 import { setAppBadge } from "../lib/badge";
+import { apiJson } from "@/lib/api";
 
 const folderIcons: Record<string, React.ElementType> = {
   inbox: InboxIcon,
@@ -35,9 +36,8 @@ const navItems = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-async function fetchFolders(): Promise<Folder[]> {
-  const res = await fetch("/api/v1/folders");
-  return res.json();
+function fetchFolders(): Promise<Folder[]> {
+  return apiJson<Folder[]>("/api/v1/folders");
 }
 
 export function Layout() {
