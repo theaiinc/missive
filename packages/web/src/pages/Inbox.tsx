@@ -14,6 +14,7 @@ import { useNotificationContext } from "@/hooks/useNotificationContext";
 import { useChat } from "@/hooks/useChat";
 import { NotificationPanel } from "@/components/NotificationPanel";
 import { colorOptions } from "@/hooks/useAccountColors";
+import { apiJson } from "@/lib/api";
 
 // ── Deterministic org color generator (fallback) ──
 const ORG_PALETTE = [
@@ -71,7 +72,7 @@ const SHORT_QUERY_WORDS = 4; // ≤ this many words → debounce auto-search
 const DEBOUNCE_MS = 350;
 
 function fetchFolders(): Promise<Folder[]> {
-  return fetch("/api/v1/folders").then((r) => r.json());
+  return apiJson<Folder[]>("/api/v1/folders");
 }
 
 function MissiveSkeleton() {
@@ -276,9 +277,8 @@ export function Inbox() {
       if (orgFilter) params.set("organization", orgFilter);
       if (unreadOnly) params.set("status", "unread");
       if (projectFilter) params.set("project", projectFilter);
-      const res = await fetch(`/api/v1/search?${params}`);
-      const json = await res.json();
-      return { missives: json.missives as Missive[], total: json.total as number };
+      const json = await apiJson<{ missives: Missive[]; total: number }>(`/api/v1/search?${params}`);
+      return { missives: json.missives, total: json.total };
     },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {

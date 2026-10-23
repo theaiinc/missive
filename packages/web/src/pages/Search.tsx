@@ -5,6 +5,7 @@ import type { SearchResult, Missive } from "@theaiinc/missive-core";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Search as SearchIcon } from "lucide-react";
+import { apiJson } from "@/lib/api";
 
 export function Search() {
   const [query, setQuery] = useState("");
@@ -13,10 +14,7 @@ export function Search() {
   const { data, isLoading } = useQuery({
     queryKey: ["search", query],
     queryFn: async (): Promise<SearchResult> => {
-      const res = await fetch(
-        `/api/v1/search?query=${encodeURIComponent(query)}&limit=50`
-      );
-      return res.json();
+      return apiJson<SearchResult>(`/api/v1/search?query=${encodeURIComponent(query)}&limit=50`);
     },
     enabled: query.length > 0,
   });

@@ -15,22 +15,7 @@ import { cn } from "@/lib/utils";
 import { useAccountColors } from "@/hooks/useAccountColors";
 import { TranslateBar, TranslatedBody, type Translation } from "@/components/Translate";
 import { remoteImageUrls, rewriteImages, signImageUrls } from "@/lib/emailImages";
-
-/** A failed load, with the HTTP status so a server error can be retried. */
-class LoadError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-  }
-}
-
-/**
- * A deploy restarts the API, which answers 5xx for a few minutes meanwhile:
- * keep trying for about a minute and a half before showing the error.
- * Other failures (gone, not yours) show at once.
- */
-const retryServerErrors = (failures: number, error: unknown) =>
-  failures < 8 && (!(error instanceof LoadError) || error.status >= 500);
-const retryDelay = (failures: number) => Math.min(2000 * 2 ** failures, 15_000);
+import { ApiError } from "@/lib/api";
 
 async function fetchThread(
   id: string
@@ -43,7 +28,7 @@ async function fetchThread(
   for (const res of [threadRes, missivesRes]) {
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
-      throw new LoadError(body.message ?? body.error ?? `The conversation couldn't be loaded (${res.status}).`, res.status);
+      throw new ApiError(body.message ?? body.error ?? `The conversation couldn't be loaded (${res.status}).`, res.status);
     }
   }
   const missives: unknown = await missivesRes.json();
@@ -62,8 +47,6 @@ export function ThreadView() {
     queryKey: ["thread", id],
     queryFn: () => fetchThread(id!),
     enabled: !!id,
-    retry: retryServerErrors,
-    retryDelay,
   });
   const queryClient = useQueryClient();
   const refreshCounts = () => {
