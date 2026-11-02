@@ -83,7 +83,7 @@ function AccountCard({
 }) {
   const { getColor, setColor } = useAccountColors();
   const [showColors, setShowColors] = useState(false);
-  const color = getColor(account.email);
+  const color = getColor(account.email) ?? colorOptions[0] ?? { swatch: "bg-gray-500", label: "Gray" };
 
   return (
     <div className="space-y-1">
@@ -125,7 +125,7 @@ function AccountCard({
                       key={i}
                       onClick={() => { setColor(account.email, i); setShowColors(false); }}
                       className={`w-10 h-10 rounded-lg ${opt.swatch} border-2 hover:ring-2 hover:ring-primary/40 transition-all ${
-                        getColor(account.email).label === opt.label ? "ring-2 ring-primary border-white dark:border-zinc-900" : "border-border"
+                        (getColor(account.email) ?? colorOptions[0])?.label === opt.label ? "ring-2 ring-primary border-white dark:border-zinc-900" : "border-border"
                       }`}
                       title={opt.label}
                     />
@@ -192,7 +192,7 @@ function ImapAccountCard({
 }) {
   const { getColor, setColor } = useAccountColors();
   const [showColors, setShowColors] = useState(false);
-  const color = getColor(account.email);
+  const color = getColor(account.email) ?? colorOptions[0] ?? { swatch: "bg-gray-500", label: "Gray" };
 
   return (
     <Card className="flex items-center justify-between p-4">
@@ -233,7 +233,7 @@ function ImapAccountCard({
                       key={i}
                       onClick={() => { setColor(account.email, i); setShowColors(false); }}
                       className={`w-10 h-10 rounded-lg ${opt.swatch} border-2 hover:ring-2 hover:ring-primary/40 transition-all ${
-                        getColor(account.email).label === opt.label ? "ring-2 ring-primary border-white dark:border-zinc-900" : "border-border"
+                        (getColor(account.email) ?? colorOptions[0])?.label === opt.label ? "ring-2 ring-primary border-white dark:border-zinc-900" : "border-border"
                       }`}
                       title={opt.label}
                     />
@@ -800,7 +800,7 @@ function ConfigSection({
               <div className="relative">
                 <button
                   onClick={() => setColorPicker(colorPicker === item.name ? null : item.name)}
-                  className={`w-6 h-6 rounded-md ${colorOptions[item.colorIndex].swatch} border border-border hover:ring-2 hover:ring-primary/40 transition-all shrink-0`}
+                  className={`w-6 h-6 rounded-md ${colorOptions[item.colorIndex]?.swatch ?? "bg-gray-500"} border border-border hover:ring-2 hover:ring-primary/40 transition-all shrink-0`}
                   title="Change color"
                 />
                 {colorPicker === item.name && (

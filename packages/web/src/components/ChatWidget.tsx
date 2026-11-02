@@ -233,7 +233,7 @@ export function ChatWidget() {
             if (parsed.toolCleaned) {
               // Backend cleaned out tool call lines — use this instead
               toolCleanedContent = parsed.toolCleaned;
-              setStreamContent(toolCleanedContent);
+              setStreamContent(toolCleanedContent ?? "");
             }
             if (parsed.toolResult) {
               toolResults.push(parsed.toolResult);

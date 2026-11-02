@@ -156,7 +156,7 @@ export function ThreadView() {
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Accounts:</span>
               {accounts.map((acct) => {
-                const color = getColor(acct);
+                const color = getColor(acct) ?? { bg: "bg-gray-500", text: "text-white" };
                 return (
                   <span
                     key={acct}
@@ -314,8 +314,8 @@ function EmailCard({ missive }: { missive: Missive }) {
                 <span
                   className={cn(
                     "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
-                    getColor(missive.accountEmail).bg,
-                    getColor(missive.accountEmail).text,
+                    (getColor(missive.accountEmail) ?? { bg: "bg-gray-500", text: "text-white" }).bg,
+                    (getColor(missive.accountEmail) ?? { bg: "bg-gray-500", text: "text-white" }).text,
                   )}
                 >
                   {missive.accountEmail}

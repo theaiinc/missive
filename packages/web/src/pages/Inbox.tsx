@@ -33,7 +33,7 @@ const ORG_PALETTE = [
 function getItemStyle(name: string, configItems: ConfigItem[]) {
   const configured = configItems.find((i) => i.name === name);
   if (configured) {
-    const opt = colorOptions[configured.colorIndex] ?? colorOptions[0];
+    const opt = colorOptions[configured.colorIndex] ?? colorOptions[0]!;
     return { bg: opt.bg, text: opt.text, dot: opt.swatch };
   }
   // Fallback to hash-based palette
@@ -730,8 +730,8 @@ export function Inbox() {
                         <span
                           className={cn(
                             "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight",
-                            getColor(missive.accountEmail).bg,
-                            getColor(missive.accountEmail).text,
+                            getColor(missive.accountEmail)?.bg ?? "",
+                                                         getColor(missive.accountEmail)?.text ?? "",
                           )}
                         >
                           {missive.accountEmail}
@@ -763,7 +763,7 @@ export function Inbox() {
                   {missive.organizations && missive.organizations.length > 0 && (
                     <div className="hidden md:flex items-center gap-1">
                       {missive.organizations.map((org) => {
-                        const style = getItemStyle(org, allOrganizations.items);
+                        const style = getItemStyle(org, allOrganizations.items) ?? { bg: "", text: "", dot: "" };
                         return (
                           <span
                             key={org}
@@ -785,7 +785,7 @@ export function Inbox() {
                   {missive.projects && missive.projects.length > 0 && (
                     <div className="hidden md:flex items-center gap-1">
                       {missive.projects.map((proj) => {
-                        const style = getItemStyle(proj, allProjects.items);
+                        const style = getItemStyle(proj, allProjects.items) ?? { bg: "", text: "", dot: "" };
                         return (
                           <span
                             key={proj}
