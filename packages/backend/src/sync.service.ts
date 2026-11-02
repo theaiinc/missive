@@ -511,11 +511,11 @@ export class SyncService {
     return undefined;
   }
 
-  /** Resolve cid: references in HTML to inline base64 data URIs */
   /**
-   * Once per account: the files on mail synced before Missive kept
-   * attachments (up to 200 messages with attachments, the last year's).
-   * Run from the scheduler; a failure leaves the account for next time.
+   * Re-runnable recovery for files on mail synced before Missive kept
+   * attachments. Each scheduler run checks Gmail's attachment-bearing messages
+   * that have no stored files, so partial or previously skipped runs recover later.
+   * A failure leaves the account for the next run.
    */
   async backfillAttachments(): Promise<void> {
     for (const c of await this.store.list("gmail")) {
