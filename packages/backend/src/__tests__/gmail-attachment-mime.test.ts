@@ -12,7 +12,12 @@ describe("Gmail attachment MIME discovery", () => {
       }),
     };
     const store = { list: vi.fn(async () => []) };
-    const service = new SyncService(store as any, storage as any, {} as any, {} as any);
+    const service = new SyncService(
+      store as any,
+      storage as any,
+      {} as any,
+      {} as any,
+    );
 
     const gmail = {
       users: {
@@ -37,10 +42,15 @@ describe("Gmail attachment MIME discovery", () => {
           mimeType: "multipart/mixed",
           parts: [
             {
-              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              mimeType:
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               filename: "attachment",
               headers: [
-                { name: "Content-Disposition", value: "attachment; filename*=UTF-8''T%C3%A0i%20li%E1%BB%87u.docx" },
+                {
+                  name: "Content-Disposition",
+                  value:
+                    "attachment; filename*=UTF-8''T%C3%A0i%20li%E1%BB%87u.docx",
+                },
                 { name: "Content-ID", value: "<not-inline>" },
               ],
               body: { attachmentId: "docx-1", size: 8 },
@@ -49,7 +59,10 @@ describe("Gmail attachment MIME discovery", () => {
               mimeType: "image/png",
               filename: "inline.png",
               headers: [
-                { name: "Content-Disposition", value: "inline; filename=\"inline.png\"" },
+                {
+                  name: "Content-Disposition",
+                  value: 'inline; filename="inline.png"',
+                },
                 { name: "Content-ID", value: "<inline-image>" },
               ],
               body: { attachmentId: "image-1", size: 8 },
