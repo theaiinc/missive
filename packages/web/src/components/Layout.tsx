@@ -368,13 +368,15 @@ function LayoutShell() {
 
       {/* Main */}
       <main className="flex-1 min-w-0 overflow-hidden flex flex-col relative">
-        <div className="md:hidden flex items-center gap-2 h-12 px-2 border-b border-border bg-card shrink-0 pt-[env(safe-area-inset-top)]">
-          <button onClick={() => setMenuOpen((o) => !o)} className="p-2 text-muted-foreground hover:text-foreground" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="sidebar">
-            {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-          <img src="/missive.svg" alt="" className="w-6 h-6" />
-          <span className="text-sm font-semibold">Missive</span>
-        </div>
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          className="md:hidden absolute top-0 left-0 z-30 p-2 pt-[calc(env(safe-area-inset-top)+0.5rem)] text-muted-foreground hover:text-foreground"
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          aria-controls="sidebar"
+        >
+          {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
         <ConnectionAlert />
         {/* Organizer activity indicator */}
         {organizerRunning && (

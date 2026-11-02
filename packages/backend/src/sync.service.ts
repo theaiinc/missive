@@ -452,17 +452,20 @@ export class SyncService {
    */
   async backfillAttachments(): Promise<void> {
     for (const c of await this.store.list("gmail")) {
-      if (c.status === "needs_reauth" || c.attachmentsBackfilledAt) continue;
+      if (c.status === "needs_reauth") continue;
       try {
         const oauth2 = this.store.createOAuth2Client();
         oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(c.id) });
         const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
         let pageToken: string | undefined;
+        let scanned = 0;
         let filled = 0;
-        for (let page = 0; page < 2; page++) {
+        for (let page = 0; page < 20; page++) {
           const list = await gmail.users.messages.list({ userId: "me", q: "has:attachment newer_than:1y", maxResults: 100, ...(pageToken ? { pageToken } : {}) });
           for (const { id } of list.data.messages ?? []) {
-            if (!id || !(await this.storage.missiveExists(id)) || (await this.storage.listAttachments([id])).length) continue;
+            if (!id || !(await this.storage.missiveExists(id))) continue;
+            if ((await this.storage.listAttachments([id])).length) continue;
+            scanned++;
             const detail = await gmail.users.messages.get({ userId: "me", id, format: "full" });
             const parts = flattenParts(detail.data.payload);
             const html = await this.decodeGmailBody(parts.find((p) => p.mimeType === "text/html"), gmail, id);
@@ -472,6 +475,7 @@ export class SyncService {
           if (!pageToken) break;
         }
         await this.store.markAttachmentsBackfilled(c.id);
+        if (scanned) console.log(`Attachments backfill: checked ${scanned} Gmail message(s), saved ${filled} file(s)`);
         if (filled) console.log(`Attachments backfill: ${filled} file(s) for a Gmail account`);
       } catch (e) {
         console.error("Gmail attachments backfill error:", safeError(e));
@@ -528,18 +532,38 @@ export class SyncService {
     html: string | undefined,
   ): Promise<number> {
     const files: IncomingAttachment[] = [];
-    for (const p of parts) {
-      if (!p.filename || !(p.body?.attachmentId || p.body?.data)) continue;
-      if ((p.body.size ?? 0) > MAX_ATTACHMENT_BYTES) continue;
+    const attachmentParts = flattenParts(parts);
+    for (const p of attachmentParts) {
+      const filename = decodeGmailFilename(p);
+      const hasData = Boolean(p.body?.attachmentId || p.body?.data);
+      if (!filename) {
+        console.warn(`Gmail attachment skipped: missing filename (mime=${p.mimeType || "unknown"})`);
+        continue;
+      }
+      if (!hasData) {
+        console.warn(`Gmail attachment skipped: missing data (filename=${filename})`);
+        continue;
+      }
+      if ((p.body.size ?? 0) > MAX_ATTACHMENT_BYTES) {
+        console.warn(`Gmail attachment skipped: exceeds size limit (filename=${filename}, size=${p.body.size})`);
+        continue;
+      }
       const cid = (p.headers?.find((h: { name?: string }) => h.name?.toLowerCase() === "content-id")?.value ?? "").replace(/^<|>$/g, "");
-      if (cid && html?.includes(`cid:${cid}`)) continue;
+      if (cid && html?.includes(`cid:${cid}`)) {
+        console.warn(`Gmail attachment skipped: inline Content-ID (filename=${filename}, cid=${cid})`);
+        continue;
+      }
       try {
         const data = p.body.attachmentId
           ? (await gmail.users.messages.attachments.get({ userId: "me", messageId, id: p.body.attachmentId })).data.data
           : p.body.data;
-        if (data) files.push({ filename: p.filename, mimeType: p.mimeType || "application/octet-stream", content: Buffer.from(data, "base64url") });
+        if (!data) {
+          console.warn(`Gmail attachment skipped: empty downloaded data (filename=${filename})`);
+          continue;
+        }
+        files.push({ filename, mimeType: p.mimeType || "application/octet-stream", content: Buffer.from(data, "base64url") });
       } catch (e) {
-        console.warn("Gmail attachment fetch error:", safeError(e));
+        console.warn(`Gmail attachment skipped: download failed (filename=${filename})`, safeError(e));
       }
     }
     await this.storage.saveAttachments(missiveId, files);
@@ -593,6 +617,18 @@ export class SyncService {
 }
 
 /** Recursively flatten MIME parts */
+function decodeGmailFilename(part: any): string | undefined {
+  const direct = typeof part.filename === "string" ? part.filename : "";
+  const headers = part.headers ?? [];
+  const disposition = headers.find((h: { name?: string }) => h.name?.toLowerCase() === "content-disposition")?.value ?? "";
+  const encoded = disposition.match(/filename\*=([^;]+)/i)?.[1]?.trim();
+  const value = encoded || direct;
+  if (!value) return undefined;
+  const match = value.match(/^([^']*)''(.+)$/);
+  const decoded = match ? decodeURIComponent(match[2]) : value.replace(/^\"|\"$/g, "");
+  return decoded || undefined;
+}
+
 function flattenParts(payload: any): any[] {
   const parts: any[] = [];
   if (!payload) return parts;
