@@ -806,13 +806,17 @@ function decodeGmailFilename(part: any): string | undefined {
   // Gmail may expose RFC 2047 encoded names in either filename or filename*.
   decoded = decoded.replace(
     /=\?([^?]+)\?([bBqQ])\?([^?]+)\?=/g,
-    (_full, charset, encoding, encodedText) => {
+    (_full: string, charset: string, encoding: string, encodedText: string) => {
       try {
-        if (encoding.toLowerCase() === "b")
-          return Buffer.from(encodedText, "base64").toString(charset);
+        if (encoding.toLowerCase() === "b") {
+          const supportedCharset = Buffer.isEncoding(charset)
+            ? charset
+            : "utf8";
+          return Buffer.from(encodedText, "base64").toString(supportedCharset);
+        }
         return encodedText
           .replace(/_/g, " ")
-          .replace(/=([0-9a-f]{2})/gi, (_, hex) =>
+          .replace(/=([0-9a-f]{2})/gi, (_: string, hex: string) =>
             String.fromCharCode(parseInt(hex, 16)),
           );
       } catch {
