@@ -38,13 +38,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // If same type as last message, merge them
       if (type && prev.length > 0) {
         const last = prev[prev.length - 1];
-        if (last.type === type) {
+        if (last?.type === type) {
           // Cap merged count at 9+ to keep it compact
           const newCount = Math.min((last.count ?? 1) + 1, 10);
           // Keep original content for display, just update count
           const updated = [...prev];
           updated[updated.length - 1] = {
             ...last,
+            role: "assistant" as const,
+            content: last.content ?? "",
             count: newCount,
           };
           return updated;

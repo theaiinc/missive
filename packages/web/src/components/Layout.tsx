@@ -1,5 +1,35 @@
-import { Outlet, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { Settings, Inbox as InboxIcon, Archive, FileText, AlertTriangle, UserPlus, LifeBuoy, User, Plus, Moon, Sun, ScrollText, Send, PenSquare, LogOut, KeyRound, ShieldCheck, ShieldAlert, CalendarDays, Menu, X, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  Outlet,
+  NavLink,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
+import {
+  Settings,
+  Inbox as InboxIcon,
+  Archive,
+  FileText,
+  AlertTriangle,
+  UserPlus,
+  LifeBuoy,
+  User,
+  Plus,
+  Moon,
+  Sun,
+  ScrollText,
+  Send,
+  PenSquare,
+  LogOut,
+  KeyRound,
+  ShieldCheck,
+  ShieldAlert,
+  CalendarDays,
+  Menu,
+  X,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -56,7 +86,12 @@ const navRow = (collapsed: boolean) =>
   );
 
 function initials(name: string) {
-  return name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+  return name
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("");
 }
 
 const COLLAPSED_KEY = "missive.sidebar.collapsed";
@@ -67,12 +102,21 @@ function useCollapsedSidebar(): [boolean, (v: boolean) => void] {
     try {
       const stored = localStorage.getItem(COLLAPSED_KEY);
       if (stored !== null) return stored === "1";
-    } catch { /* storage blocked */ }
-    return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
+    } catch {
+      /* storage blocked */
+    }
+    return (
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 1023px)").matches
+    );
   });
   const set = (v: boolean) => {
     setCollapsed(v);
-    try { localStorage.setItem(COLLAPSED_KEY, v ? "1" : "0"); } catch { /* storage blocked */ }
+    try {
+      localStorage.setItem(COLLAPSED_KEY, v ? "1" : "0");
+    } catch {
+      /* storage blocked */
+    }
   };
   return [collapsed, set];
 }
@@ -92,7 +136,9 @@ function LayoutShell() {
     refetchIntervalInBackground: true,
   });
   const inboxUnread = folders?.find((f) => f.slug === "inbox")?.missiveCount;
-  useEffect(() => { if (inboxUnread !== undefined) setAppBadge(inboxUnread); }, [inboxUnread]);
+  useEffect(() => {
+    if (inboxUnread !== undefined) setAppBadge(inboxUnread);
+  }, [inboxUnread]);
   const [showNewFolder, setShowNewFolder] = useState(false);
   // Below md the sidebar is a slide-out menu; it closes on navigation.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -103,17 +149,28 @@ function LayoutShell() {
   // page from inside the sidebar: its transform makes fixed children local.)
   useEffect(() => {
     if (!accountOpen) return;
-    const away = (e: PointerEvent) => { if (!accountRef.current?.contains(e.target as Node)) setAccountOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAccountOpen(false); };
+    const away = (e: PointerEvent) => {
+      if (!accountRef.current?.contains(e.target as Node))
+        setAccountOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAccountOpen(false);
+    };
     document.addEventListener("pointerdown", away);
     document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", esc);
+    };
   }, [accountOpen]);
   // The phone menu is always the full sidebar; the rail is for md and up.
   const collapsed = collapsedPref && !menuOpen;
   const location = useLocation();
   const onInbox = location.pathname === "/inbox";
-  useEffect(() => { setMenuOpen(false); setAccountOpen(false); }, [location.pathname, location.search]);
+  useEffect(() => {
+    setMenuOpen(false);
+    setAccountOpen(false);
+  }, [location.pathname, location.search]);
   const [newFolderName, setNewFolderName] = useState("");
 
   const { theme, toggleTheme } = useTheme();
@@ -139,19 +196,30 @@ function LayoutShell() {
   };
 
   return (
-      <div className="flex h-dvh bg-background">
-        {menuOpen && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" aria-hidden="true" onClick={() => setMenuOpen(false)} />}
-        {/* Sidebar */}
-        <aside
-          id="sidebar"
-          aria-label="Navigation"
+    <div className="flex h-dvh bg-background">
+      {menuOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          aria-hidden="true"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+      {/* Sidebar */}
+      <aside
+        id="sidebar"
+        aria-label="Navigation"
+        className={cn(
+          "border-r border-border bg-card flex flex-col shrink-0 fixed inset-y-0 left-0 z-50 pt-[env(safe-area-inset-top)] transition-[transform,width] duration-200 md:static md:translate-x-0",
+          collapsed ? "w-[3.75rem]" : "w-64 max-w-[85vw] md:w-56",
+          menuOpen ? "translate-x-0" : "-translate-x-full invisible md:visible",
+        )}
+      >
+        <div
           className={cn(
-            "border-r border-border bg-card flex flex-col shrink-0 fixed inset-y-0 left-0 z-50 transition-[transform,width] duration-200 md:static md:translate-x-0",
-            collapsed ? "w-[3.75rem]" : "w-64 max-w-[85vw] md:w-56",
-            menuOpen ? "translate-x-0" : "-translate-x-full invisible md:visible",
+            "flex items-center h-14 shrink-0",
+            collapsed ? "justify-center px-2" : "justify-between pl-4 pr-2",
           )}
         >
-        <div className={cn("flex items-center h-14 shrink-0", collapsed ? "justify-center px-2" : "justify-between pl-4 pr-2")}>
           {collapsed ? (
             <button
               onClick={() => setCollapsed(false)}
@@ -162,15 +230,17 @@ function LayoutShell() {
               <PanelLeftOpen className="w-5 h-5" />
             </button>
           ) : (
-          <button
-            onClick={() => navigate("/inbox")}
-            className="flex items-center gap-2.5 min-w-0"
-            title="Missive"
-            aria-label="Missive inbox"
-          >
-            <img src="/missive.svg" alt="" className="w-8 h-8 shrink-0" />
-            <span className="text-sm font-semibold text-foreground truncate">Missive</span>
-          </button>
+            <button
+              onClick={() => navigate("/inbox")}
+              className="flex items-center gap-2.5 min-w-0"
+              title="Missive"
+              aria-label="Missive inbox"
+            >
+              <img src="/missive.svg" alt="" className="w-8 h-8 shrink-0" />
+              <span className="text-sm font-semibold text-foreground truncate">
+                Missive
+              </span>
+            </button>
           )}
           {!collapsed && (
             <>
@@ -196,7 +266,12 @@ function LayoutShell() {
         <Separator />
 
         {me && me.mailboxes.some(canSendAs) && (
-          <div className={cn("pt-2", collapsed ? "px-2 flex justify-center" : "px-3 pt-3")}>
+          <div
+            className={cn(
+              "pt-2",
+              collapsed ? "px-2 flex justify-center" : "px-3 pt-3",
+            )}
+          >
             <button
               onClick={() => compose()}
               title="Compose"
@@ -212,22 +287,36 @@ function LayoutShell() {
           </div>
         )}
 
-        <nav className={cn("flex-1 overflow-y-auto overflow-x-hidden", collapsed ? "p-2 space-y-0.5" : "p-3 space-y-1")}>
+        <nav
+          className={cn(
+            "flex-1 overflow-y-auto overflow-x-hidden",
+            collapsed ? "p-2 space-y-0.5" : "p-3 space-y-1",
+          )}
+        >
           {/* Folder list — first item is the inbox folder */}
           {folders?.map((folder) => {
             const Icon = folderIcons[folder.icon ?? ""] ?? InboxIcon;
             const isActive = onInbox && activeFolder === folder.slug;
-            const count = folder.missiveCount != null && folder.missiveCount > 0 ? folder.missiveCount : null;
+            const count =
+              folder.missiveCount != null && folder.missiveCount > 0
+                ? folder.missiveCount
+                : null;
             return (
               <button
                 key={folder.slug}
                 onClick={() => navigate(`/inbox?folder=${folder.slug}`)}
-                title={collapsed ? `${folder.name}${count ? ` (${count})` : ""}` : undefined}
+                title={
+                  collapsed
+                    ? `${folder.name}${count ? ` (${count})` : ""}`
+                    : undefined
+                }
                 aria-label={collapsed ? folder.name : undefined}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   navRow(collapsed),
-                  isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  isActive
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
               >
                 <span className="relative shrink-0">
@@ -238,9 +327,13 @@ function LayoutShell() {
                     </span>
                   )}
                 </span>
-                {!collapsed && <span className="flex-1 truncate">{folder.name}</span>}
+                {!collapsed && (
+                  <span className="flex-1 truncate">{folder.name}</span>
+                )}
                 {!collapsed && count && (
-                  <span className="text-[11px] font-medium text-muted-foreground tabular-nums">{count}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
+                    {count}
+                  </span>
                 )}
               </button>
             );
@@ -265,10 +358,16 @@ function LayoutShell() {
 
           {/* Add folder button */}
           <button
-            onClick={() => { setCollapsed(false); setShowNewFolder(true); }}
+            onClick={() => {
+              setCollapsed(false);
+              setShowNewFolder(true);
+            }}
             title={collapsed ? "New folder" : undefined}
             aria-label={collapsed ? "New folder" : undefined}
-            className={cn(navRow(collapsed), "text-muted-foreground hover:bg-accent hover:text-accent-foreground")}
+            className={cn(
+              navRow(collapsed),
+              "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
           >
             <Plus className="w-4 h-4 shrink-0" />
             {!collapsed && <span>New Folder</span>}
@@ -278,15 +377,41 @@ function LayoutShell() {
 
           <button
             onClick={toggleTheme}
-            title={collapsed ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
-            aria-label={collapsed ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
-            className={cn(navRow(collapsed), "text-muted-foreground hover:bg-accent hover:text-accent-foreground")}
+            title={
+              collapsed
+                ? theme === "dark"
+                  ? "Light mode"
+                  : "Dark mode"
+                : undefined
+            }
+            aria-label={
+              collapsed
+                ? theme === "dark"
+                  ? "Light mode"
+                  : "Dark mode"
+                : undefined
+            }
+            className={cn(
+              navRow(collapsed),
+              "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
           >
-            {theme === "dark" ? <Sun className="w-4 h-4 shrink-0" /> : <Moon className="w-4 h-4 shrink-0" />}
-            {!collapsed && <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>}
+            {theme === "dark" ? (
+              <Sun className="w-4 h-4 shrink-0" />
+            ) : (
+              <Moon className="w-4 h-4 shrink-0" />
+            )}
+            {!collapsed && (
+              <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            )}
           </button>
 
-          {[...navItems, ...(me?.isAdmin ? [{ to: "/admin", label: "Admin console", icon: ShieldCheck }] : [])].map((item) => {
+          {[
+            ...navItems,
+            ...(me?.isAdmin
+              ? [{ to: "/admin", label: "Admin console", icon: ShieldCheck }]
+              : []),
+          ].map((item) => {
             const Icon = item.icon;
             return (
               <NavLink
@@ -295,7 +420,12 @@ function LayoutShell() {
                 title={collapsed ? item.label : undefined}
                 aria-label={collapsed ? item.label : undefined}
                 className={({ isActive }) =>
-                  cn(navRow(collapsed), isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground")
+                  cn(
+                    navRow(collapsed),
+                    isActive
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  )
                 }
               >
                 <Icon className="w-4 h-4 shrink-0" />
@@ -312,7 +442,11 @@ function LayoutShell() {
             <div ref={accountRef} className="relative flex justify-center">
               <button
                 onClick={() => setAccountOpen((o) => !o)}
-                title={me ? `${me.name ?? me.email}: account and sign out` : "Account"}
+                title={
+                  me
+                    ? `${me.name ?? me.email}: account and sign out`
+                    : "Account"
+                }
                 aria-label="Account menu"
                 aria-expanded={accountOpen}
                 className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
@@ -325,17 +459,36 @@ function LayoutShell() {
               </button>
               {accountOpen && (
                 <>
-                  <div role="menu" className="absolute left-full bottom-0 ml-2 z-50 w-60 rounded-lg border border-border bg-popover shadow-xl py-1 text-sm">
+                  <div
+                    role="menu"
+                    className="absolute left-full bottom-0 ml-2 z-50 w-60 rounded-lg border border-border bg-popover shadow-xl py-1 text-sm"
+                  >
                     <div className="px-3 py-2 border-b border-border">
-                      <p className="font-medium text-foreground truncate">{me?.name ?? me?.email ?? ""}</p>
-                      <p className="text-xs text-muted-foreground truncate">{me?.mailboxes.find((m) => m.kind !== "group")?.address ?? me?.email ?? ""}</p>
+                      <p className="font-medium text-foreground truncate">
+                        {me?.name ?? me?.email ?? ""}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {me?.mailboxes.find((m) => m.kind !== "group")
+                          ?.address ??
+                          me?.email ??
+                          ""}
+                      </p>
                     </div>
                     {me?.accountUrl && (
-                      <a href={me.accountUrl} target="_blank" rel="noopener noreferrer" onClick={() => setAccountOpen(false)} className="flex items-center gap-2 px-3 py-2 text-foreground hover:bg-accent">
+                      <a
+                        href={me.accountUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setAccountOpen(false)}
+                        className="flex items-center gap-2 px-3 py-2 text-foreground hover:bg-accent"
+                      >
                         <KeyRound className="w-4 h-4" /> Account &amp; security
                       </a>
                     )}
-                    <a href="/auth/logout" className="flex items-center gap-2 px-3 py-2 text-foreground hover:bg-accent">
+                    <a
+                      href="/auth/logout"
+                      className="flex items-center gap-2 px-3 py-2 text-foreground hover:bg-accent"
+                    >
                       <LogOut className="w-4 h-4" /> Sign out
                     </a>
                   </div>
@@ -350,15 +503,33 @@ function LayoutShell() {
                 </AvatarFallback>
               </Avatar>
               <div className="text-sm leading-tight min-w-0 flex-1">
-                <p className="font-medium text-foreground truncate">{me?.name ?? me?.email ?? ""}</p>
-                <p className="text-xs text-muted-foreground truncate">{me?.mailboxes.find((m) => m.kind !== "group")?.address ?? me?.email ?? ""}</p>
+                <p className="font-medium text-foreground truncate">
+                  {me?.name ?? me?.email ?? ""}
+                </p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {me?.mailboxes.find((m) => m.kind !== "group")?.address ??
+                    me?.email ??
+                    ""}
+                </p>
               </div>
               {me?.accountUrl && (
-                <a href={me.accountUrl} target="_blank" rel="noopener noreferrer" title="Account & security: password, passkeys" aria-label="Account and security" className="p-1 rounded-md text-muted-foreground hover:text-foreground shrink-0">
+                <a
+                  href={me.accountUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Account & security: password, passkeys"
+                  aria-label="Account and security"
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground shrink-0"
+                >
                   <KeyRound className="w-4 h-4" />
                 </a>
               )}
-              <a href="/auth/logout" title="Sign out" aria-label="Sign out" className="p-1 rounded-md text-muted-foreground hover:text-foreground shrink-0">
+              <a
+                href="/auth/logout"
+                title="Sign out"
+                aria-label="Sign out"
+                className="p-1 rounded-md text-muted-foreground hover:text-foreground shrink-0"
+              >
                 <LogOut className="w-4 h-4" />
               </a>
             </div>
@@ -368,13 +539,15 @@ function LayoutShell() {
 
       {/* Main */}
       <main className="flex-1 min-w-0 overflow-hidden flex flex-col relative">
-        <div className="md:hidden flex items-center gap-2 h-12 px-2 border-b border-border bg-card shrink-0 pt-[env(safe-area-inset-top)]">
-          <button onClick={() => setMenuOpen((o) => !o)} className="p-2 text-muted-foreground hover:text-foreground" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="sidebar">
-            {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-          <img src="/missive.svg" alt="" className="w-6 h-6" />
-          <span className="text-sm font-semibold">Missive</span>
-        </div>
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          className="md:hidden absolute top-0 left-0 z-30 p-2 pt-[calc(env(safe-area-inset-top)+0.5rem)] text-muted-foreground hover:text-foreground"
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          aria-controls="sidebar"
+        >
+          {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
         <ConnectionAlert />
         {/* Organizer activity indicator */}
         {organizerRunning && (
@@ -384,7 +557,11 @@ function LayoutShell() {
         )}
         <div className="flex-1 overflow-hidden">
           {/* A blank account's first visit: pick the hosted mailbox address first. */}
-          {me?.mailboxOffer ? <ClaimMailbox domain={me.mailboxOffer.domain} /> : <Outlet />}
+          {me?.mailboxOffer ? (
+            <ClaimMailbox domain={me.mailboxOffer.domain} />
+          ) : (
+            <Outlet />
+          )}
         </div>
       </main>
 

@@ -1,14 +1,14 @@
-import { Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
-import { PostgresService } from './postgres.service';
-import { openRow, openRows, seal, sealJson } from './content-crypto';
+import { Injectable } from "@nestjs/common";
+import { createHash } from "node:crypto";
+import { PostgresService } from "./postgres.service";
+import { openRow, openRows, seal, sealJson } from "./content-crypto";
 import type {
   Missive,
   Thread,
   SearchQuery,
   SearchResult,
   Folder,
-} from '@theaiinc/missive-core';
+} from "@theaiinc/missive-core";
 
 /**
  * Every missives column except body_html and headers. body_html is ~90% of a
@@ -18,13 +18,22 @@ import type {
  * and sync pass, which is what used up the database's transfer quota.
  */
 /** The body sync stores when a message came in without one. */
-export const NO_CONTENT_BODY = '(no content)';
+export const NO_CONTENT_BODY = "(no content)";
 /** Longest a sealed "(no content)" can be; longer bodies are real ones. */
 const PLACEHOLDER_BODY_MAX_BYTES = 512;
 
 /** A file on a message as it arrives (from a provider, or attached in Compose). */
-export type IncomingAttachment = { filename: string; mimeType: string; content: Buffer };
-export type AttachmentInfo = { id: string; filename: string; mimeType: string; size: number };
+export type IncomingAttachment = {
+  filename: string;
+  mimeType: string;
+  content: Buffer;
+};
+export type AttachmentInfo = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+};
 /** Larger files aren't kept (Gmail and Cloudflare cap a whole message at 25 MB). */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
@@ -45,12 +54,15 @@ export class StorageService {
       [id],
     );
     if (rows.length === 0) return null;
-    return rowToMissive(await openRow('missives', rows[0]));
+    return rowToMissive(await openRow("missives", rows[0]));
   }
 
   /** Existence only — for sync, which checks every listed message each run. */
   async missiveExists(id: string): Promise<boolean> {
-    const { rows } = await this.pg.query(`SELECT 1 FROM missives WHERE id = $1 LIMIT 1`, [id]);
+    const { rows } = await this.pg.query(
+      `SELECT 1 FROM missives WHERE id = $1 LIMIT 1`,
+      [id],
+    );
     return rows.length > 0;
   }
 
@@ -67,7 +79,7 @@ export class StorageService {
    */
   async getMissiveSyncState(
     id: string,
-  ): Promise<{ status: Missive['status']; needsBodyRepair: boolean } | null> {
+  ): Promise<{ status: Missive["status"]; needsBodyRepair: boolean } | null> {
     const { rows } = await this.pg.query(
       `SELECT id, status, owner_id,
               CASE WHEN body IS NULL OR octet_length(body) <= ${PLACEHOLDER_BODY_MAX_BYTES} THEN body END AS body,
@@ -76,9 +88,13 @@ export class StorageService {
       [id],
     );
     if (rows.length === 0) return null;
-    if (!rows[0].body_is_short) return { status: rows[0].status, needsBodyRepair: false };
-    const row = await openRow('missives', rows[0]);
-    return { status: row.status, needsBodyRepair: !row.body || row.body === NO_CONTENT_BODY };
+    if (!rows[0].body_is_short)
+      return { status: rows[0].status, needsBodyRepair: false };
+    const row = await openRow("missives", rows[0]);
+    return {
+      status: row.status,
+      needsBodyRepair: !row.body || row.body === NO_CONTENT_BODY,
+    };
   }
 
   async saveMissive(missive: Missive): Promise<void> {
@@ -103,20 +119,26 @@ export class StorageService {
         missive.direction,
         missive.provider,
         missive.providerMessageId,
-        await seal('missives', 'subject', missive.subject),
-        await seal('missives', 'body', missive.body),
-        await seal('missives', 'body_html', missive.bodyHtml),
-        await seal('missives', 'sender_name', missive.from.name),
-        await seal('missives', 'sender_address', missive.from.address),
-        await sealJson('missives', 'recipients', missive.to),
+        await seal("missives", "subject", missive.subject),
+        await seal("missives", "body", missive.body),
+        await seal("missives", "body_html", missive.bodyHtml),
+        await seal("missives", "sender_name", missive.from.name),
+        await seal("missives", "sender_address", missive.from.address),
+        await sealJson("missives", "recipients", missive.to),
         missive.status,
         missive.classification ?? null,
-        await seal('missives', 'account_email', missive.accountEmail),
-        missive.folder ?? 'inbox',
+        await seal("missives", "account_email", missive.accountEmail),
+        missive.folder ?? "inbox",
         missive.receivedAt,
-        missive.replyTo?.length ? await seal('missives', 'reply_to', JSON.stringify(missive.replyTo)) : null,
-        missive.cc?.length ? await seal('missives', 'cc_list', JSON.stringify(missive.cc)) : null,
-        missive.bcc?.length ? await seal('missives', 'bcc_list', JSON.stringify(missive.bcc)) : null,
+        missive.replyTo?.length
+          ? await seal("missives", "reply_to", JSON.stringify(missive.replyTo))
+          : null,
+        missive.cc?.length
+          ? await seal("missives", "cc_list", JSON.stringify(missive.cc))
+          : null,
+        missive.bcc?.length
+          ? await seal("missives", "bcc_list", JSON.stringify(missive.bcc))
+          : null,
       ],
     );
   }
@@ -126,10 +148,12 @@ export class StorageService {
       `SELECT * FROM missives WHERE thread_id = $1 ORDER BY received_at DESC`,
       [threadId],
     );
-    const missives = (await openRows('missives', rows)).map(rowToMissive);
+    const missives = (await openRows("missives", rows)).map(rowToMissive);
     const files = await this.listAttachments(missives.map((m) => m.id));
     for (const m of missives) {
-      const own = files.filter((f) => f.missiveId === m.id).map(({ missiveId: _, ...f }) => f);
+      const own = files
+        .filter((f) => f.missiveId === m.id)
+        .map(({ missiveId: _, ...f }) => f);
       if (own.length) m.attachments = own;
     }
     return missives;
@@ -141,44 +165,65 @@ export class StorageService {
    * Keeps a message's files. Ids come from the message, position and name, so
    * syncing the same message again stores nothing new.
    */
-  async saveAttachments(missiveId: string, files: IncomingAttachment[]): Promise<void> {
+  async saveAttachments(
+    missiveId: string,
+    files: IncomingAttachment[],
+  ): Promise<void> {
     for (const [i, f] of files.entries()) {
       if (f.content.length > MAX_ATTACHMENT_BYTES) continue;
-      const id = `a_${createHash('sha256').update(`${missiveId}|${i}|${f.filename}`).digest('hex').slice(0, 26)}`;
+      const id = `a_${createHash("sha256").update(`${missiveId}|${i}|${f.filename}`).digest("hex").slice(0, 26)}`;
       await this.pg.query(
         `INSERT INTO attachments (id, missive_id, filename, mime_type, size, content)
          VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (owner_id, id) DO NOTHING`,
         [
           id,
           missiveId,
-          await seal('attachments', 'filename', f.filename || 'attachment'),
-          f.mimeType || 'application/octet-stream',
+          await seal("attachments", "filename", f.filename || "attachment"),
+          f.mimeType || "application/octet-stream",
           f.content.length,
-          await seal('attachments', 'content', f.content.toString('base64')),
+          await seal("attachments", "content", f.content.toString("base64")),
         ],
       );
     }
   }
 
   /** The files on these messages, without their content. */
-  async listAttachments(missiveIds: string[]): Promise<(AttachmentInfo & { missiveId: string })[]> {
+  async listAttachments(
+    missiveIds: string[],
+  ): Promise<(AttachmentInfo & { missiveId: string })[]> {
     if (!missiveIds.length) return [];
     const { rows } = await this.pg.query(
       // owner_id: openRows needs it to pick the key for the encrypted file names.
       `SELECT id, owner_id, missive_id, filename, mime_type, size FROM attachments WHERE missive_id = ANY($1) ORDER BY id`,
       [missiveIds],
     );
-    return (await openRows('attachments', rows)).map((r) => ({
-      id: r.id, missiveId: r.missive_id, filename: r.filename, mimeType: r.mime_type, size: r.size,
+    return (await openRows("attachments", rows)).map((r) => ({
+      id: r.id,
+      missiveId: r.missive_id,
+      filename: r.filename,
+      mimeType: r.mime_type,
+      size: r.size,
     }));
   }
 
   /** One file with its content, or null when it isn't the current user's. */
-  async getAttachment(id: string): Promise<(AttachmentInfo & { missiveId: string; content: Buffer }) | null> {
-    const { rows } = await this.pg.query(`SELECT * FROM attachments WHERE id = $1`, [id]);
+  async getAttachment(
+    id: string,
+  ): Promise<(AttachmentInfo & { missiveId: string; content: Buffer }) | null> {
+    const { rows } = await this.pg.query(
+      `SELECT * FROM attachments WHERE id = $1`,
+      [id],
+    );
     if (!rows.length) return null;
-    const r = await openRow('attachments', rows[0]);
-    return { id: r.id, missiveId: r.missive_id, filename: r.filename, mimeType: r.mime_type, size: r.size, content: Buffer.from(r.content, 'base64') };
+    const r = await openRow("attachments", rows[0]);
+    return {
+      id: r.id,
+      missiveId: r.missive_id,
+      filename: r.filename,
+      mimeType: r.mime_type,
+      size: r.size,
+      content: Buffer.from(r.content, "base64"),
+    };
   }
 
   async getRecentMissives(since: string, limit = 10): Promise<Missive[]> {
@@ -186,7 +231,7 @@ export class StorageService {
       `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE created_at > $1 ORDER BY created_at DESC LIMIT $2`,
       [since, limit],
     );
-    return (await openRows('missives', rows)).map(rowToMissive);
+    return (await openRows("missives", rows)).map(rowToMissive);
   }
 
   // ── Threads ──
@@ -197,7 +242,7 @@ export class StorageService {
       [id],
     );
     if (rows.length === 0) return null;
-    return rowToThread(await openRow('threads', rows[0]));
+    return rowToThread(await openRow("threads", rows[0]));
   }
 
   async saveThread(thread: Thread): Promise<void> {
@@ -215,10 +260,10 @@ export class StorageService {
         thread.id,
         thread.provider,
         thread.providerThreadId,
-        await seal('threads', 'subject', thread.subject),
+        await seal("threads", "subject", thread.subject),
         JSON.stringify(thread.participants),
         thread.messageCount,
-        `{${thread.missiveIds.join(',')}}`,
+        `{${thread.missiveIds.join(",")}}`,
         thread.lastActivityAt,
       ],
     );
@@ -277,7 +322,7 @@ export class StorageService {
     }
 
     const where =
-      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = query.limit ?? 50;
     const offset = query.offset ?? 0;
 
@@ -285,13 +330,14 @@ export class StorageService {
     let total: number;
     const text = query.query?.trim().toLowerCase();
     const from = query.from?.trim().toLowerCase();
-    if (text || from) {
+    const to = query.to?.trim().toLowerCase();
+    if (text || from || to) {
       // Decrypt this user's candidate rows (already narrowed by folder,
       // channel, dates, ...) and match in memory, as ILIKE '%…%' did. With no
       // folder given, search spans every folder but Spam and deleted mail.
       const scope = query.folder
         ? where
-        : `${where ? `${where} AND` : 'WHERE'} folder <> 'spam' AND status <> 'deleted'`;
+        : `${where ? `${where} AND` : "WHERE"} folder <> 'spam' AND status <> 'deleted'`;
       const dataRes = await this.pg.query(
         `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${scope} ORDER BY received_at DESC`,
         params,
@@ -299,13 +345,44 @@ export class StorageService {
       // Free text matches who it's from and to as well as subject and body
       // ("byteplus" finds mail from BytePlus <noreply@byteplus.com>).
       const haystack = (r: any) =>
-        [r.subject, r.body, r.sender_name, r.sender_address, typeof r.recipients === 'string' ? r.recipients : JSON.stringify(r.recipients ?? '')]
-          .map((v) => String(v ?? ''))
-          .join('\n')
+        [
+          r.subject,
+          r.body,
+          r.sender_name,
+          r.sender_address,
+          typeof r.recipients === "string"
+            ? r.recipients
+            : JSON.stringify(r.recipients ?? ""),
+        ]
+          .map((v) => String(v ?? ""))
+          .join("\n")
           .toLowerCase();
-      const matches = (await openRows('missives', dataRes.rows)).filter((r) =>
-        (!text || haystack(r).includes(text)) &&
-        (!from || String(r.sender_address ?? '').toLowerCase().includes(from)),
+      const recipientAddresses = (r: any): string[] => {
+        let value: unknown = r.recipients;
+        if (typeof value === "string") {
+          try {
+            value = JSON.parse(value);
+          } catch {
+            return [];
+          }
+        }
+        return Array.isArray(value)
+          ? value
+              .map((recipient: any) =>
+                String(recipient?.address ?? recipient ?? "").toLowerCase(),
+              )
+              .filter(Boolean)
+          : [];
+      };
+      const matches = (await openRows("missives", dataRes.rows)).filter(
+        (r) =>
+          (!text || haystack(r).includes(text)) &&
+          (!from ||
+            String(r.sender_address ?? "")
+              .toLowerCase()
+              .includes(from)) &&
+          (!to ||
+            recipientAddresses(r).some((address) => address.includes(to))),
       );
       total = matches.length;
       missives = matches.slice(offset, offset + limit).map(rowToMissive);
@@ -319,11 +396,11 @@ export class StorageService {
         `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${where} ORDER BY received_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset],
       );
-      missives = (await openRows('missives', dataRes.rows)).map(rowToMissive);
+      missives = (await openRows("missives", dataRes.rows)).map(rowToMissive);
     }
 
     // Resolve threads
-    const threadIds = [...new Set(missives.map(m => m.threadId))] as string[];
+    const threadIds = [...new Set(missives.map((m) => m.threadId))] as string[];
     const threads: Thread[] = [];
     for (const tid of threadIds) {
       const t = await this.getThread(tid);
@@ -366,30 +443,47 @@ export class StorageService {
    * Marks a thread's messages read or unread; returns those that changed, with
    * what's needed to mirror it to Gmail. Your own sent mail is always read.
    */
-  async setThreadRead(threadId: string, read: boolean): Promise<{ id: string; provider: string; provider_message_id: string; account_email: string | null }[]> {
+  async setThreadRead(
+    threadId: string,
+    read: boolean,
+  ): Promise<
+    {
+      id: string;
+      provider: string;
+      provider_message_id: string;
+      account_email: string | null;
+    }[]
+  > {
     const { rows } = await this.pg.query(
       `UPDATE missives SET status = $2, updated_at = NOW()
         WHERE thread_id = $1 AND direction = 'inbound' AND status = $3
         RETURNING id, provider, provider_message_id, account_email, owner_id`,
-      [threadId, read ? 'read' : 'unread', read ? 'unread' : 'read'],
+      [threadId, read ? "read" : "unread", read ? "unread" : "read"],
     );
-    return openRows('missives', rows);
+    return openRows("missives", rows);
   }
 
   /** Marks everything unread in a folder as read; returns those that changed. */
-  async markFolderRead(folder: string): Promise<{ id: string; provider: string; provider_message_id: string; account_email: string | null }[]> {
+  async markFolderRead(folder: string): Promise<
+    {
+      id: string;
+      provider: string;
+      provider_message_id: string;
+      account_email: string | null;
+    }[]
+  > {
     const { rows } = await this.pg.query(
       `UPDATE missives SET status = 'read', updated_at = NOW()
         WHERE folder = $1 AND status = 'unread'
         RETURNING id, provider, provider_message_id, account_email, owner_id`,
       [folder],
     );
-    return openRows('missives', rows);
+    return openRows("missives", rows);
   }
 
   async moveMissive(id: string, folder: string): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $2',
+      "UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $2",
       [folder, id],
     );
   }
@@ -398,27 +492,30 @@ export class StorageService {
     const folder = classificationToFolder(classification);
     if (folder) {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, folder = $2, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $3',
+        "UPDATE missives SET classification = $1, folder = $2, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $3",
         [classification, folder, id],
       );
     } else {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $2',
+        "UPDATE missives SET classification = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE id = $2",
         [classification, id],
       );
     }
   }
 
-  async classifyThread(threadId: string, classification: string): Promise<void> {
+  async classifyThread(
+    threadId: string,
+    classification: string,
+  ): Promise<void> {
     const folder = classificationToFolder(classification);
     if (folder) {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, folder = $2, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $3',
+        "UPDATE missives SET classification = $1, folder = $2, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $3",
         [classification, folder, threadId],
       );
     } else {
       await this.pg.query(
-        'UPDATE missives SET classification = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $2',
+        "UPDATE missives SET classification = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $2",
         [classification, threadId],
       );
     }
@@ -426,7 +523,7 @@ export class StorageService {
 
   async moveThread(threadId: string, folder: string): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $2',
+      "UPDATE missives SET folder = $1, filed_by_user_at = NOW(), updated_at = NOW() WHERE thread_id = $2",
       [folder, threadId],
     );
   }
@@ -444,8 +541,12 @@ export class StorageService {
       [folder, excludeId],
     );
     const suffix = `@${domain.toLowerCase()}`;
-    return (await openRows('missives', rows))
-      .filter((r) => String(r.sender_address ?? '').toLowerCase().endsWith(suffix))
+    return (await openRows("missives", rows))
+      .filter((r) =>
+        String(r.sender_address ?? "")
+          .toLowerCase()
+          .endsWith(suffix),
+      )
       .slice(0, limit)
       .map((r) => ({ id: r.id }));
   }
@@ -462,8 +563,13 @@ export class StorageService {
       [folder, excludeId],
     );
     const wanted = address.trim().toLowerCase();
-    return (await openRows('missives', rows))
-      .filter((r) => String(r.sender_address ?? '').trim().toLowerCase() === wanted)
+    return (await openRows("missives", rows))
+      .filter(
+        (r) =>
+          String(r.sender_address ?? "")
+            .trim()
+            .toLowerCase() === wanted,
+      )
       .slice(0, limit)
       .map((r) => ({ id: r.id }));
   }
@@ -489,16 +595,22 @@ export class StorageService {
 
   // ── Organizations ──
 
-  async setMissiveOrganizations(id: string, organizations: string[]): Promise<void> {
+  async setMissiveOrganizations(
+    id: string,
+    organizations: string[],
+  ): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET organizations = $1, updated_at = NOW() WHERE id = $2',
+      "UPDATE missives SET organizations = $1, updated_at = NOW() WHERE id = $2",
       [organizations, id],
     );
   }
 
-  async setThreadOrganizations(threadId: string, organizations: string[]): Promise<void> {
+  async setThreadOrganizations(
+    threadId: string,
+    organizations: string[],
+  ): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET organizations = $1, updated_at = NOW() WHERE thread_id = $2',
+      "UPDATE missives SET organizations = $1, updated_at = NOW() WHERE thread_id = $2",
       [organizations, threadId],
     );
   }
@@ -506,7 +618,7 @@ export class StorageService {
   /** List all distinct organizations across all missives. */
   async listOrganizations(): Promise<string[]> {
     const { rows } = await this.pg.query(
-      "SELECT DISTINCT unnest(organizations) AS org FROM missives WHERE organizations != '{}' ORDER BY org"
+      "SELECT DISTINCT unnest(organizations) AS org FROM missives WHERE organizations != '{}' ORDER BY org",
     );
     return rows.map((r: any) => r.org);
   }
@@ -515,14 +627,14 @@ export class StorageService {
 
   async setMissiveProjects(id: string, projects: string[]): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET projects = $1, updated_at = NOW() WHERE id = $2',
+      "UPDATE missives SET projects = $1, updated_at = NOW() WHERE id = $2",
       [projects, id],
     );
   }
 
   async setThreadProjects(threadId: string, projects: string[]): Promise<void> {
     await this.pg.query(
-      'UPDATE missives SET projects = $1, updated_at = NOW() WHERE thread_id = $2',
+      "UPDATE missives SET projects = $1, updated_at = NOW() WHERE thread_id = $2",
       [projects, threadId],
     );
   }
@@ -530,15 +642,15 @@ export class StorageService {
   /** List all distinct projects across all missives. */
   async listProjects(): Promise<string[]> {
     const { rows } = await this.pg.query(
-      "SELECT DISTINCT unnest(projects) AS proj FROM missives WHERE projects != '{}' ORDER BY proj"
+      "SELECT DISTINCT unnest(projects) AS proj FROM missives WHERE projects != '{}' ORDER BY proj",
     );
     return rows.map((r: any) => r.proj);
   }
 }
 
 /** Stored Reply-To: JSON text of addresses (null when the message had none). */
-function parseAddresses(value: unknown): Missive['replyTo'] {
-  if (typeof value !== 'string' || !value) return undefined;
+function parseAddresses(value: unknown): Missive["replyTo"] {
+  if (typeof value !== "string" || !value) return undefined;
   try {
     const list = JSON.parse(value);
     return Array.isArray(list) && list.length ? list : undefined;
@@ -560,7 +672,7 @@ function rowToMissive(row: any): Missive {
     bodyHtml: row.body_html ?? undefined,
     from: { name: row.sender_name ?? undefined, address: row.sender_address },
     to:
-      typeof row.recipients === 'string'
+      typeof row.recipients === "string"
         ? JSON.parse(row.recipients)
         : row.recipients,
     replyTo: parseAddresses(row.reply_to),
@@ -568,7 +680,7 @@ function rowToMissive(row: any): Missive {
     bcc: parseAddresses(row.bcc_list),
     status: row.status,
     classification: row.classification ?? undefined,
-    folder: row.folder ?? 'inbox',
+    folder: row.folder ?? "inbox",
     accountEmail: row.account_email ?? undefined,
     organizations: row.organizations ?? undefined,
     projects: row.projects ?? undefined,
@@ -585,7 +697,7 @@ function rowToThread(row: any): Thread {
     providerThreadId: row.provider_thread_id,
     subject: row.subject ?? undefined,
     participants:
-      typeof row.participants === 'string'
+      typeof row.participants === "string"
         ? JSON.parse(row.participants)
         : row.participants,
     messageCount: row.message_count,

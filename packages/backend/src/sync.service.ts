@@ -1,8 +1,16 @@
 import { safeError } from "./log-safe";
 import { Injectable } from "@nestjs/common";
 import { google } from "googleapis";
-import { ConnectorStore, ReauthRequiredError, type StoredConnector } from "./connector.store";
-import { MAX_ATTACHMENT_BYTES, StorageService, type IncomingAttachment } from "./storage/storage.service";
+import {
+  ConnectorStore,
+  ReauthRequiredError,
+  type StoredConnector,
+} from "./connector.store";
+import {
+  MAX_ATTACHMENT_BYTES,
+  StorageService,
+  type IncomingAttachment,
+} from "./storage/storage.service";
 import { RuleService } from "./rule.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive } from "@theaiinc/missive-core";
@@ -13,8 +21,15 @@ import { graphAddresses, parseAddressList } from "./addresses";
  * `newlyFlagged` is true only on the sync that found out, so callers can
  * announce it once rather than on every tick.
  */
-function reauthResult(reason: string | null | undefined, newlyFlagged: boolean) {
-  return { error: reason || "Reconnect required", needsReauth: true, newlyFlagged };
+function reauthResult(
+  reason: string | null | undefined,
+  newlyFlagged: boolean,
+) {
+  return {
+    error: reason || "Reconnect required",
+    needsReauth: true,
+    newlyFlagged,
+  };
 }
 
 @Injectable()
@@ -23,7 +38,7 @@ export class SyncService {
     private readonly store: ConnectorStore,
     private readonly storage: StorageService,
     private readonly rules: RuleService,
-    private readonly eventEmitter: EventEmitter2
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /** Sync all Gmail accounts, or a specific one by email. */
@@ -53,7 +68,9 @@ export class SyncService {
         // Refreshes (and saves) the tokens when expired; marks the account for
         // reconnecting if the provider refuses the refresh token.
         const oauth2 = this.store.createOAuth2Client();
-        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(connector.id) });
+        oauth2.setCredentials({
+          access_token: await this.store.getValidGmailToken(connector.id),
+        });
 
         const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
 
@@ -67,7 +84,11 @@ export class SyncService {
         let synced = 0;
 
         for (const msg of messages) {
-          if ((await this.importGmailMessage(gmail, connector, msg.id!, true)) === "new") synced++;
+          if (
+            (await this.importGmailMessage(gmail, connector, msg.id!, true)) ===
+            "new"
+          )
+            synced++;
         }
 
         results[connector.email] = { synced };
@@ -77,7 +98,9 @@ export class SyncService {
       } catch (err) {
         console.error("Gmail sync error:", safeError(err));
         results[connector.email] =
-          err instanceof ReauthRequiredError ? reauthResult(err.message, true) : { error: "Sync failed" };
+          err instanceof ReauthRequiredError
+            ? reauthResult(err.message, true)
+            : { error: "Sync failed" };
       }
     }
 
@@ -118,9 +141,7 @@ export class SyncService {
 
     const subject = header("Subject");
     const fromRaw = header("From") ?? "";
-    const fromMatch = fromRaw.match(
-      /^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/
-    );
+    const fromMatch = fromRaw.match(/^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/);
     const dateRaw = header("Date");
     const toRaw = header("To") ?? "";
 
@@ -181,11 +202,19 @@ export class SyncService {
         address: addr.trim(),
       })),
       // New mail takes Gmail's read state (read there already means read here).
-      status: existing?.status ?? (detail.data.labelIds?.includes("UNREAD") === false ? "read" : "unread"),
+      status:
+        existing?.status ??
+        (detail.data.labelIds?.includes("UNREAD") === false
+          ? "read"
+          : "unread"),
       accountEmail: connector.email,
       // Mail found outside Gmail's inbox (by search) keeps its place: spam
       // stays spam, archived stays archived. The sync itself lists the inbox.
-      folder: labels.includes("SPAM") ? "spam" : labels.includes("INBOX") ? "inbox" : "archived",
+      folder: labels.includes("SPAM")
+        ? "spam"
+        : labels.includes("INBOX")
+          ? "inbox"
+          : "archived",
       receivedAt: dateRaw
         ? new Date(dateRaw).toISOString()
         : new Date().toISOString(),
@@ -194,7 +223,13 @@ export class SyncService {
     };
 
     await this.storage.saveMissive(missive);
-    await this.saveGmailAttachments(gmail, msg.id!, missive.id, parts, htmlWithCids);
+    await this.saveGmailAttachments(
+      gmail,
+      msg.id!,
+      missive.id,
+      parts,
+      htmlWithCids,
+    );
     if (!isNew) return "repaired";
 
     // Apply rules to the newly synced missive
@@ -203,7 +238,8 @@ export class SyncService {
       await this.rules.applyActions(missive.id, ruleActions);
     }
 
-    if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
+    if (!thread.missiveIds.includes(missive.id))
+      thread.missiveIds.push(missive.id);
     thread.messageCount = thread.missiveIds.length;
     thread.lastActivityAt = new Date().toISOString();
     await this.storage.saveThread(thread);
@@ -231,11 +267,22 @@ export class SyncService {
       if (connector.status === "needs_reauth") continue;
       try {
         const oauth2 = this.store.createOAuth2Client();
-        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(connector.id) });
+        oauth2.setCredentials({
+          access_token: await this.store.getValidGmailToken(connector.id),
+        });
         const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
-        const res = await gmail.users.messages.list({ userId: "me", maxResults: limit, q: text, includeSpamTrash: false });
+        const res = await gmail.users.messages.list({
+          userId: "me",
+          maxResults: limit,
+          q: text,
+          includeSpamTrash: false,
+        });
         for (const m of res.data.messages ?? []) {
-          if ((await this.importGmailMessage(gmail, connector, m.id!, false)) === "new") added++;
+          if (
+            (await this.importGmailMessage(gmail, connector, m.id!, false)) ===
+            "new"
+          )
+            added++;
         }
       } catch (err) {
         console.error("Gmail search import error:", safeError(err));
@@ -279,7 +326,7 @@ export class SyncService {
         // Fetch messages from Graph API
         const listRes = await fetch(
           "https://graph.microsoft.com/v1.0/me/messages?$top=10&$filter=isDraft eq false&$orderby=receivedDateTime desc",
-          { headers }
+          { headers },
         );
         if (!listRes.ok) {
           const text = await listRes.text();
@@ -304,16 +351,20 @@ export class SyncService {
           // Fetch full message body
           const detailRes = await fetch(
             `https://graph.microsoft.com/v1.0/me/messages/${msg.id}?$select=id,body,bodyPreview`,
-            { headers }
+            { headers },
           );
-          const detail = (await detailRes.json()) as { body?: { contentType?: string; content?: string }; bodyPreview?: string };
-          const htmlBody = detail.body?.contentType === "html"
-            ? detail.body.content
-            : undefined;
+          const detail = (await detailRes.json()) as {
+            body?: { contentType?: string; content?: string };
+            bodyPreview?: string;
+          };
+          const htmlBody =
+            detail.body?.contentType === "html"
+              ? detail.body.content
+              : undefined;
           const plainBody =
             detail.body?.contentType === "text"
               ? detail.body.content
-              : detail.bodyPreview ?? "";
+              : (detail.bodyPreview ?? "");
 
           const providerThreadId = msg.conversationId ?? msg.id;
 
@@ -338,12 +389,11 @@ export class SyncService {
             id: msg.id,
             threadId: providerThreadId,
             channel: "email",
-            direction:
-              msg.internetMessageHeaders?.find(
-                (h: any) => h.name === "message-id"
-              )
-                ? "inbound"
-                : "outbound",
+            direction: msg.internetMessageHeaders?.find(
+              (h: any) => h.name === "message-id",
+            )
+              ? "inbound"
+              : "outbound",
             provider: "outlook",
             providerMessageId: msg.id,
             subject,
@@ -354,15 +404,23 @@ export class SyncService {
               address: fromRaw,
             },
             replyTo: (msg.replyTo ?? [])
-              .map((r: { emailAddress?: { address?: string; name?: string } }) => ({
-                address: (r.emailAddress?.address ?? "").toLowerCase(),
-                ...(r.emailAddress?.name ? { name: r.emailAddress.name } : {}),
-              }))
+              .map(
+                (r: {
+                  emailAddress?: { address?: string; name?: string };
+                }) => ({
+                  address: (r.emailAddress?.address ?? "").toLowerCase(),
+                  ...(r.emailAddress?.name
+                    ? { name: r.emailAddress.name }
+                    : {}),
+                }),
+              )
               .filter((r: { address: string }) => r.address.includes("@")),
             cc: graphAddresses(msg.ccRecipients),
             bcc: graphAddresses(msg.bccRecipients),
             to: toRaw
-              ? toRaw.split(",").map((addr: string) => ({ address: addr.trim() }))
+              ? toRaw
+                  .split(",")
+                  .map((addr: string) => ({ address: addr.trim() }))
               : [],
             status: "unread",
             accountEmail: connector.email,
@@ -374,7 +432,8 @@ export class SyncService {
           };
 
           await this.storage.saveMissive(missive);
-          if (msg.hasAttachments) await this.saveOutlookAttachments(headers, msg.id, missive.id);
+          if (msg.hasAttachments)
+            await this.saveOutlookAttachments(headers, msg.id, missive.id);
 
           // Apply rules to the newly synced missive
           const ruleActions = await this.rules.evaluate(missive);
@@ -382,7 +441,8 @@ export class SyncService {
             await this.rules.applyActions(missive.id, ruleActions);
           }
 
-          if (!thread.missiveIds.includes(missive.id)) thread.missiveIds.push(missive.id);
+          if (!thread.missiveIds.includes(missive.id))
+            thread.missiveIds.push(missive.id);
           thread.messageCount = thread.missiveIds.length;
           thread.lastActivityAt = new Date().toISOString();
           await this.storage.saveThread(thread);
@@ -403,7 +463,9 @@ export class SyncService {
       } catch (err) {
         console.error("Outlook sync error:", safeError(err));
         results[connector.email] =
-          err instanceof ReauthRequiredError ? reauthResult(err.message, true) : { error: "Sync failed" };
+          err instanceof ReauthRequiredError
+            ? reauthResult(err.message, true)
+            : { error: "Sync failed" };
       }
     }
 
@@ -415,9 +477,14 @@ export class SyncService {
    * attachmentId (used when the body is too large for inline storage).
    */
   private async decodeGmailBody(
-    part: { mimeType: string; body?: { data?: string; attachmentId?: string; size?: number } } | undefined,
+    part:
+      | {
+          mimeType: string;
+          body?: { data?: string; attachmentId?: string; size?: number };
+        }
+      | undefined,
     gmail: ReturnType<typeof google.gmail>,
-    messageId: string
+    messageId: string,
   ): Promise<string | undefined> {
     if (!part?.body) return undefined;
     // When data is present inline (no attachmentId) — decode directly
@@ -444,35 +511,66 @@ export class SyncService {
     return undefined;
   }
 
-  /** Resolve cid: references in HTML to inline base64 data URIs */
   /**
-   * Once per account: the files on mail synced before Missive kept
-   * attachments (up to 200 messages with attachments, the last year's).
-   * Run from the scheduler; a failure leaves the account for next time.
+   * Re-runnable recovery for files on mail synced before Missive kept
+   * attachments. Each scheduler run checks Gmail's attachment-bearing messages
+   * that have no stored files, so partial or previously skipped runs recover later.
+   * A failure leaves the account for the next run.
    */
   async backfillAttachments(): Promise<void> {
     for (const c of await this.store.list("gmail")) {
-      if (c.status === "needs_reauth" || c.attachmentsBackfilledAt) continue;
+      if (c.status === "needs_reauth") continue;
       try {
         const oauth2 = this.store.createOAuth2Client();
-        oauth2.setCredentials({ access_token: await this.store.getValidGmailToken(c.id) });
+        oauth2.setCredentials({
+          access_token: await this.store.getValidGmailToken(c.id),
+        });
         const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
         let pageToken: string | undefined;
+        let scanned = 0;
         let filled = 0;
-        for (let page = 0; page < 2; page++) {
-          const list = await gmail.users.messages.list({ userId: "me", q: "has:attachment newer_than:1y", maxResults: 100, ...(pageToken ? { pageToken } : {}) });
+        for (let page = 0; page < 20; page++) {
+          const list = await gmail.users.messages.list({
+            userId: "me",
+            q: "has:attachment newer_than:1y",
+            maxResults: 100,
+            ...(pageToken ? { pageToken } : {}),
+          });
           for (const { id } of list.data.messages ?? []) {
-            if (!id || !(await this.storage.missiveExists(id)) || (await this.storage.listAttachments([id])).length) continue;
-            const detail = await gmail.users.messages.get({ userId: "me", id, format: "full" });
+            if (!id || !(await this.storage.missiveExists(id))) continue;
+            if ((await this.storage.listAttachments([id])).length) continue;
+            scanned++;
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id,
+              format: "full",
+            });
             const parts = flattenParts(detail.data.payload);
-            const html = await this.decodeGmailBody(parts.find((p) => p.mimeType === "text/html"), gmail, id);
-            filled += await this.saveGmailAttachments(gmail, id, id, parts, html);
+            const html = await this.decodeGmailBody(
+              parts.find((p) => p.mimeType === "text/html"),
+              gmail,
+              id,
+            );
+            filled += await this.saveGmailAttachments(
+              gmail,
+              id,
+              id,
+              parts,
+              html,
+            );
           }
           pageToken = list.data.nextPageToken ?? undefined;
           if (!pageToken) break;
         }
         await this.store.markAttachmentsBackfilled(c.id);
-        if (filled) console.log(`Attachments backfill: ${filled} file(s) for a Gmail account`);
+        if (scanned)
+          console.log(
+            `Attachments backfill: checked ${scanned} Gmail message(s), saved ${filled} file(s)`,
+          );
+        if (filled)
+          console.log(
+            `Attachments backfill: ${filled} file(s) for a Gmail account`,
+          );
       } catch (e) {
         console.error("Gmail attachments backfill error:", safeError(e));
       }
@@ -480,16 +578,31 @@ export class SyncService {
     for (const c of await this.store.list("outlook")) {
       if (c.status === "needs_reauth" || c.attachmentsBackfilledAt) continue;
       try {
-        const headers = { Authorization: `Bearer ${await this.store.getValidOutlookToken(c.id)}`, "Content-Type": "application/json" };
-        const res = await fetch("https://graph.microsoft.com/v1.0/me/messages?$filter=hasAttachments eq true&$top=200&$select=id", { headers });
+        const headers = {
+          Authorization: `Bearer ${await this.store.getValidOutlookToken(c.id)}`,
+          "Content-Type": "application/json",
+        };
+        const res = await fetch(
+          "https://graph.microsoft.com/v1.0/me/messages?$filter=hasAttachments eq true&$top=200&$select=id",
+          { headers },
+        );
         if (!res.ok) throw new Error(`Graph API list error: ${res.status}`);
         let filled = 0;
-        for (const { id } of ((await res.json()) as { value?: { id: string }[] }).value ?? []) {
-          if (!(await this.storage.missiveExists(id)) || (await this.storage.listAttachments([id])).length) continue;
+        for (const { id } of (
+          (await res.json()) as { value?: { id: string }[] }
+        ).value ?? []) {
+          if (
+            !(await this.storage.missiveExists(id)) ||
+            (await this.storage.listAttachments([id])).length
+          )
+            continue;
           filled += await this.saveOutlookAttachments(headers, id, id);
         }
         await this.store.markAttachmentsBackfilled(c.id);
-        if (filled) console.log(`Attachments backfill: ${filled} file(s) for an Outlook account`);
+        if (filled)
+          console.log(
+            `Attachments backfill: ${filled} file(s) for an Outlook account`,
+          );
       } catch (e) {
         console.error("Outlook attachments backfill error:", safeError(e));
       }
@@ -500,14 +613,39 @@ export class SyncService {
    * Keeps an Outlook message's files. Inline pictures and attached Outlook
    * items or links (no contentBytes) aren't files to download.
    */
-  async saveOutlookAttachments(headers: Record<string, string>, messageId: string, missiveId: string): Promise<number> {
+  async saveOutlookAttachments(
+    headers: Record<string, string>,
+    messageId: string,
+    missiveId: string,
+  ): Promise<number> {
     try {
-      const res = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`, { headers });
-      if (!res.ok) throw new Error(`Graph API attachments error: ${res.status}`);
-      const { value = [] } = (await res.json()) as { value?: { name?: string; contentType?: string; size?: number; isInline?: boolean; contentBytes?: string }[] };
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`,
+        { headers },
+      );
+      if (!res.ok)
+        throw new Error(`Graph API attachments error: ${res.status}`);
+      const { value = [] } = (await res.json()) as {
+        value?: {
+          name?: string;
+          contentType?: string;
+          size?: number;
+          isInline?: boolean;
+          contentBytes?: string;
+        }[];
+      };
       const files: IncomingAttachment[] = value
-        .filter((a) => a.contentBytes && !a.isInline && (a.size ?? 0) <= MAX_ATTACHMENT_BYTES)
-        .map((a) => ({ filename: a.name || "attachment", mimeType: a.contentType || "application/octet-stream", content: Buffer.from(a.contentBytes!, "base64") }));
+        .filter(
+          (a) =>
+            a.contentBytes &&
+            !a.isInline &&
+            (a.size ?? 0) <= MAX_ATTACHMENT_BYTES,
+        )
+        .map((a) => ({
+          filename: a.name || "attachment",
+          mimeType: a.contentType || "application/octet-stream",
+          content: Buffer.from(a.contentBytes!, "base64"),
+        }));
       await this.storage.saveAttachments(missiveId, files);
       return files.length;
     } catch (e) {
@@ -528,18 +666,65 @@ export class SyncService {
     html: string | undefined,
   ): Promise<number> {
     const files: IncomingAttachment[] = [];
-    for (const p of parts) {
-      if (!p.filename || !(p.body?.attachmentId || p.body?.data)) continue;
-      if ((p.body.size ?? 0) > MAX_ATTACHMENT_BYTES) continue;
-      const cid = (p.headers?.find((h: { name?: string }) => h.name?.toLowerCase() === "content-id")?.value ?? "").replace(/^<|>$/g, "");
-      if (cid && html?.includes(`cid:${cid}`)) continue;
+    const attachmentParts = flattenParts(parts);
+    for (const p of attachmentParts) {
+      const filename = decodeGmailFilename(p);
+      const hasData = Boolean(p.body?.attachmentId || p.body?.data);
+      if (!filename) {
+        console.warn(
+          `Gmail attachment skipped: missing filename (mime=${p.mimeType || "unknown"})`,
+        );
+        continue;
+      }
+      if (!hasData) {
+        console.warn(
+          `Gmail attachment skipped: missing data (filename=${filename})`,
+        );
+        continue;
+      }
+      if ((p.body.size ?? 0) > MAX_ATTACHMENT_BYTES) {
+        console.warn(
+          `Gmail attachment skipped: exceeds size limit (filename=${filename}, size=${p.body.size})`,
+        );
+        continue;
+      }
+      const cid = (
+        p.headers?.find(
+          (h: { name?: string }) => h.name?.toLowerCase() === "content-id",
+        )?.value ?? ""
+      ).replace(/^<|>$/g, "");
+      if (cid && html?.includes(`cid:${cid}`)) {
+        console.warn(
+          `Gmail attachment skipped: inline Content-ID (filename=${filename}, cid=${cid})`,
+        );
+        continue;
+      }
       try {
         const data = p.body.attachmentId
-          ? (await gmail.users.messages.attachments.get({ userId: "me", messageId, id: p.body.attachmentId })).data.data
+          ? (
+              await gmail.users.messages.attachments.get({
+                userId: "me",
+                messageId,
+                id: p.body.attachmentId,
+              })
+            ).data.data
           : p.body.data;
-        if (data) files.push({ filename: p.filename, mimeType: p.mimeType || "application/octet-stream", content: Buffer.from(data, "base64url") });
+        if (!data) {
+          console.warn(
+            `Gmail attachment skipped: empty downloaded data (filename=${filename})`,
+          );
+          continue;
+        }
+        files.push({
+          filename,
+          mimeType: p.mimeType || "application/octet-stream",
+          content: Buffer.from(data, "base64url"),
+        });
       } catch (e) {
-        console.warn("Gmail attachment fetch error:", safeError(e));
+        console.warn(
+          `Gmail attachment skipped: download failed (filename=${filename})`,
+          safeError(e),
+        );
       }
     }
     await this.storage.saveAttachments(missiveId, files);
@@ -548,9 +733,14 @@ export class SyncService {
 
   private async inlineCidImages(
     html: string,
-    parts: { mimeType: string; body?: { data?: string; attachmentId?: string }; filename?: string; headers?: { name: string; value: string }[] }[],
+    parts: {
+      mimeType: string;
+      body?: { data?: string; attachmentId?: string };
+      filename?: string;
+      headers?: { name: string; value: string }[];
+    }[],
     gmail: ReturnType<typeof google.gmail>,
-    messageId: string
+    messageId: string,
   ): Promise<string> {
     const cidRegex = /cid:([^\s"'>]+)/g;
     let result = html;
@@ -561,7 +751,7 @@ export class SyncService {
       // Find attachment with matching Content-ID
       const attachment = parts.find((p) => {
         const contentIdHeader = p.headers?.find(
-          (h) => h.name?.toLowerCase() === "content-id"
+          (h) => h.name?.toLowerCase() === "content-id",
         );
         if (!contentIdHeader?.value) return false;
         const v: string = contentIdHeader.value;
@@ -580,7 +770,10 @@ export class SyncService {
           if (rawData && typeof rawData === "string") {
             const mime = attachment.mimeType || "image/png";
             const standard = rawData.replace(/-/g, "+").replace(/_/g, "/");
-            result = result.replaceAll(`cid:${cid}`, `data:${mime};base64,${standard}`);
+            result = result.replaceAll(
+              `cid:${cid}`,
+              `data:${mime};base64,${standard}`,
+            );
           }
         } catch {
           // skip failed image inlining
@@ -593,7 +786,50 @@ export class SyncService {
 }
 
 /** Recursively flatten MIME parts */
+function decodeGmailFilename(part: any): string | undefined {
+  const direct = typeof part.filename === "string" ? part.filename : "";
+  const headers = part.headers ?? [];
+  const disposition =
+    headers.find(
+      (h: { name?: string }) => h.name?.toLowerCase() === "content-disposition",
+    )?.value ?? "";
+  const encoded = disposition.match(/filename\*=([^;]+)/i)?.[1]?.trim();
+  const value = encoded || direct;
+  if (!value) return undefined;
+  const match = value.match(/^([^']*)''(.+)$/);
+  let decoded = match ? match[2] : value.replace(/^\"|\"$/g, "");
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    // Preserve the original value when a provider sends malformed percent escapes.
+  }
+  // Gmail may expose RFC 2047 encoded names in either filename or filename*.
+  decoded = decoded.replace(
+    /=\?([^?]+)\?([bBqQ])\?([^?]+)\?=/g,
+    (_full: string, charset: string, encoding: string, encodedText: string) => {
+      try {
+        if (encoding.toLowerCase() === "b") {
+          const supportedCharset = Buffer.isEncoding(charset)
+            ? charset
+            : "utf8";
+          return Buffer.from(encodedText, "base64").toString(supportedCharset);
+        }
+        return encodedText
+          .replace(/_/g, " ")
+          .replace(/=([0-9a-f]{2})/gi, (_: string, hex: string) =>
+            String.fromCharCode(parseInt(hex, 16)),
+          );
+      } catch {
+        return encodedText;
+      }
+    },
+  );
+  return decoded || undefined;
+}
+
 function flattenParts(payload: any): any[] {
+  if (Array.isArray(payload))
+    return payload.flatMap((part) => flattenParts(part));
   const parts: any[] = [];
   if (!payload) return parts;
 
