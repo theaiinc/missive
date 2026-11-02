@@ -9,7 +9,11 @@ const messages: Record<string, any> = {
     threadId: "t-plain",
     payload: {
       mimeType: "text/plain",
-      headers: [{ name: "Subject", value: "Plain" }, { name: "From", value: "A <a@example.com>" }, { name: "Date", value: "Mon, 1 Sep 2026 10:00:00 +0000" }],
+      headers: [
+        { name: "Subject", value: "Plain" },
+        { name: "From", value: "A <a@example.com>" },
+        { name: "Date", value: "Mon, 1 Sep 2026 10:00:00 +0000" },
+      ],
       body: { data: b64("just text") },
     },
   },
@@ -17,7 +21,11 @@ const messages: Record<string, any> = {
     threadId: "t-html",
     payload: {
       mimeType: "multipart/alternative",
-      headers: [{ name: "Subject", value: "Rich" }, { name: "From", value: "B <b@example.com>" }, { name: "Date", value: "Mon, 1 Sep 2026 11:00:00 +0000" }],
+      headers: [
+        { name: "Subject", value: "Rich" },
+        { name: "From", value: "B <b@example.com>" },
+        { name: "Date", value: "Mon, 1 Sep 2026 11:00:00 +0000" },
+      ],
       parts: [
         { mimeType: "text/plain", body: { data: b64("rich text") } },
         { mimeType: "text/html", body: { data: b64("<p>rich</p>") } },
@@ -31,7 +39,9 @@ vi.mock("googleapis", () => ({
     gmail: () => ({
       users: {
         messages: {
-          list: async () => ({ data: { messages: Object.keys(messages).map((id) => ({ id })) } }),
+          list: async () => ({
+            data: { messages: Object.keys(messages).map((id) => ({ id })) },
+          }),
           get: async ({ id }: { id: string }) => ({ data: messages[id] }),
           attachments: { get: async () => ({ data: {} }) },
         },
@@ -40,7 +50,6 @@ vi.mock("googleapis", () => ({
   },
 }));
 
-
 function setup() {
   const missives = new Map<string, any>();
   const threads = new Map<string, any>();
@@ -48,29 +57,44 @@ function setup() {
     getMissive: async (id: string) => missives.get(id),
     getMissiveSyncState: async (id: string) => {
       const m = missives.get(id);
-      return m ? { status: m.status, needsBodyRepair: !m.body || m.body === "(no content)" } : null;
+      return m
+        ? {
+            status: m.status,
+            needsBodyRepair: !m.body || m.body === "(no content)",
+          }
+        : null;
     },
     missiveExists: async (id: string) => missives.has(id),
     saveMissive: async (m: any) => void missives.set(m.id, structuredClone(m)),
     saveAttachments: async () => {},
-    getThread: async (id: string) => (threads.has(id) ? structuredClone(threads.get(id)) : undefined),
+    getThread: async (id: string) =>
+      threads.has(id) ? structuredClone(threads.get(id)) : undefined,
     saveThread: async (t: any) => void threads.set(t.id, structuredClone(t)),
   };
   const store = {
-    list: async () => [{ id: "gmail:me@example.com", email: "me@example.com", tokens: {} }],
+    list: async () => [
+      { id: "gmail:me@example.com", email: "me@example.com", tokens: {} },
+    ],
     createOAuth2Client: () => ({ setCredentials: () => {} }),
     getValidGmailToken: async () => "access",
     updateLastSyncAt: async () => {},
   };
   const rules = { evaluate: vi.fn(async () => []), applyActions: vi.fn() };
   const events = { emit: vi.fn() };
-  const sync = new SyncService(store as any, storage as any, rules as any, events as any);
+  const sync = new SyncService(
+    store as any,
+    storage as any,
+    rules as any,
+    events as any,
+  );
   return { sync, missives, threads, rules, events };
 }
 
 describe("Gmail sync counts only new messages", () => {
   let env: ReturnType<typeof setup>;
-  beforeEach(() => { env = setup(); });
+  beforeEach(() => {
+    env = setup();
+  });
 
   it("reports both messages as new on the first sync", async () => {
     const r = await env.sync.syncGmail();
@@ -91,7 +115,10 @@ describe("Gmail sync counts only new messages", () => {
     await env.sync.syncGmail();
     for (const m of env.missives.values()) m.status = "read";
     await env.sync.syncGmail();
-    expect([...env.missives.values()].map((m) => m.status)).toEqual(["read", "read"]);
+    expect([...env.missives.values()].map((m) => m.status)).toEqual([
+      "read",
+      "read",
+    ]);
   });
 
   it("does not add a message to its thread twice", async () => {
@@ -110,5 +137,71 @@ describe("Gmail sync counts only new messages", () => {
     expect(r["me@example.com"]).toEqual({ synced: 0 });
     expect(env.missives.get("plain").body).toBe("just text");
     expect(env.missives.get("plain").status).toBe("read");
+  });
+
+  it("recovers nested Gmail attachments and keeps non-inline Content-ID files", async () => {
+    const saved: any[] = [];
+    (env.sync as any).storage.saveAttachments = async (
+      _id: string,
+      files: any[],
+    ) => saved.push(...files);
+    const gmail = {
+      users: {
+        messages: {
+          attachments: {
+            get: async () => ({ data: { data: b64("nested document") } }),
+          },
+        },
+      },
+    };
+    const parts = [
+      {
+        mimeType: "multipart/related",
+        parts: [
+          {
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "text/html",
+                body: { data: b64('<img src="cid:logo@example.com">') },
+              },
+              {
+                mimeType:
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                filename: "",
+                headers: [
+                  {
+                    name: "Content-Disposition",
+                    value:
+                      "attachment; filename*=UTF-8''T%C3%A0i%20li%E1%BB%87u.docx",
+                  },
+                  { name: "Content-ID", value: "<file@example.com>" },
+                ],
+                body: { attachmentId: "file-1", size: 16 },
+              },
+              {
+                mimeType: "application/pdf",
+                filename: "inline.pdf",
+                headers: [{ name: "Content-ID", value: "<logo@example.com>" }],
+                body: { data: b64("inline") },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const count = await (env.sync as any).saveGmailAttachments(
+      gmail,
+      "gmail-message",
+      "missive",
+      parts,
+      '<img src="cid:logo@example.com">',
+    );
+
+    expect(count).toBe(1);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].filename).toBe("Tài liệu.docx");
+    expect(saved[0].content.toString()).toBe("nested document");
   });
 });
