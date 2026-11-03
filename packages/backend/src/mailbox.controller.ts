@@ -1,7 +1,8 @@
 import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, NotFoundException, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import { timingSafeEqual } from "node:crypto";
-import { MailboxService, SendError, textToHtml } from "./mailbox.service";
+import { MailboxService, SendError } from "./mailbox.service";
+import { messageBody } from "./message-html";
 import { GmailSendError, GmailSendService } from "./gmail-send.service";
 import type { IncomingAttachment } from "./storage/storage.service";
 import { UsersService } from "./users.service";
@@ -105,7 +106,11 @@ export class MailboxController {
     const cc = list(body.cc);
     const bcc = list(body.bcc);
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-    const text = typeof body.text === "string" ? body.text : "";
+    // Formatted in Compose: `html`, sanitized here, and the plain text made from it. Otherwise `text`.
+    const { text, html } = messageBody({
+      text: typeof body.text === "string" ? body.text : "",
+      html: typeof body.html === "string" ? body.html : undefined,
+    });
     const problems: string[] = [];
     if (!validEmail(body.from)) problems.push("Choose a From address.");
     if (!to.length) problems.push("Add at least one recipient.");
@@ -126,7 +131,7 @@ export class MailboxController {
           bcc,
           subject,
           text,
-          html: textToHtml(text),
+          html,
           replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
           readReceipt: body.readReceipt === true,
           attachments,
@@ -145,6 +150,7 @@ export class MailboxController {
         bcc,
         subject,
         text,
+        html,
         replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
         readReceipt: body.readReceipt === true,
         attachments,
