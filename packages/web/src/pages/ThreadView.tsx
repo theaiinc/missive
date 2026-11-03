@@ -452,7 +452,8 @@ function wrapEmailHtml(html: string): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; font-src data:">
 <meta name="color-scheme" content="light">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { margin: 0; }
+  *, *::before, *::after { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     font-size: 14px;
@@ -465,9 +466,8 @@ function wrapEmailHtml(html: string): string {
   }
   /* Preserve email images */
   img { max-width: 100% !important; height: auto; }
-  /* Email-safe table handling */
-  table { max-width: 100% !important; }
-  td, th { word-break: break-word; }
+  /* Preserve designed table widths; the email frame scrolls wide content horizontally. */
+  td, th { overflow-wrap: break-word; }
   /* Links */
   a { color: #0066cc; text-decoration: underline; }
   /* Blockquotes */
