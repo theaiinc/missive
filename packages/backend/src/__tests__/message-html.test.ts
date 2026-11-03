@@ -64,7 +64,7 @@ describe("htmlToText", () => {
     expect(text).toContain("Here is the plan, roughly: see the doc [https://example.com/plan].");
     expect(text).toMatch(/\* Draft\n \* Review/);
     expect(text).toMatch(/1\. Monday\n 2\. Tuesday/);
-    expect(text).toContain("--\nSteve Tran\nThe AI Inc");
+    expect(text).toContain("-- \nSteve Tran\nThe AI Inc");
     expect(text).toContain("> Can you send the plan?");
   });
 });
