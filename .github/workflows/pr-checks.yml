@@ -22,6 +22,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build shared core package
+        run: pnpm --filter @theaiinc/missive-core build
+
       - name: Run backend tests
         run: pnpm --filter @theaiinc/missive-backend test
 
