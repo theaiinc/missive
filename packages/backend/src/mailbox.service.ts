@@ -13,6 +13,7 @@ import { requireUser } from "./request-context";
 import { CalendarService } from "./calendar/calendar.service";
 import { safeError } from "./log-safe";
 import { fromParsed } from "./addresses";
+import { textToHtml } from "./message-html";
 
 /**
  * Mailboxes Missive hosts itself (address@custom-domain), like Gmail does.
@@ -30,6 +31,8 @@ export type OutgoingMail = {
   bcc?: string[];
   subject: string;
   text: string;
+  /** The HTML part, already sanitized (see messageBody); without it, `text` in paragraphs. */
+  html?: string;
   /** Missive id of the message being replied to. */
   replyTo?: string;
   /** Ask for a read receipt (Disposition-Notification-To); many mail apps ignore it. */
@@ -46,12 +49,6 @@ const addresses = (value: AddressObject | AddressObject[] | undefined): Address[
     .filter((a) => a.address)
     .map((a) => ({ address: a.address!.toLowerCase(), name: a.name || undefined }));
 const toText = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-
-/** The HTML part of a message written as plain text: paragraphs, with line breaks kept. */
-export const textToHtml = (text: string) =>
-  `<div style="font:15px/1.6 -apple-system,Segoe UI,Inter,sans-serif">${text
-    .split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, "<br>")}</p>`).join("")}</div>`;
 
 @Injectable()
 export class MailboxService {
@@ -176,7 +173,7 @@ export class MailboxService {
       root = thread?.providerThreadId ?? inReplyTo;
     }
 
-    const html = textToHtml(mail.text);
+    const html = mail.html ?? textToHtml(mail.text);
     const headers: Record<string, string> = {};
     if (mail.readReceipt) headers["Disposition-Notification-To"] = mailbox.address;
     if (inReplyTo) {
