@@ -112,7 +112,11 @@ export const htmlToText = (html: string) =>
       { selector: "h2", options: { uppercase: false } },
       { selector: "h3", options: { uppercase: false } },
     ],
-  }).trim();
+  })
+    .trim()
+    // Mail clients recognize "-- " as the signature delimiter; html-to-text
+    // removes trailing whitespace, so restore it at the start of a line.
+    .replace(/^--(?=\r?\n|$)/gm, "-- "); 
 
 /**
  * A message's text and HTML parts. With `html` (formatted in Compose) it's
