@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input";
 import { useSenders, useSignature } from "@/hooks/useMe";
 import { Loader2, Paperclip, Sparkles, X } from "lucide-react";
 import { formatSize } from "@/components/Attachments";
+import { MessageEditor, editorText, textToHtml, useMessageEditor } from "@/components/MessageEditor";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
-export type Draft = { from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; replyTo?: string; fromName?: string };
+export type Draft = { id?: string; updatedAt?: string; from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; html?: string; replyTo?: string; threadId?: string; fromName?: string; mailboxId?: string; attachments?: Array<{ filename: string; mimeType: string; content?: string }> };
 
 const ComposeContext = createContext<(draft?: Draft) => void>(() => undefined);
 
@@ -50,7 +51,6 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     cc: draft.cc ?? "",
     bcc: draft.bcc ?? "",
     subject: draft.subject ?? "",
-    text: draft.text ?? "",
   });
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -70,25 +70,27 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   };
   const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
 
-  // What follows what you write: your signature for the From address, then a reply's quote.
+  // What you write, formatted. A reply's draft.text is its quote, which goes below instead.
+  const editor = useMessageEditor({ text: draft.replyTo ? "" : draft.text, autofocus: !!draft.to });
+  const written = () => editorText(editor);
+
+  // What follows what you write, as plain text: your signature for the From address, then a reply's quote.
   const quote = draft.replyTo ? (draft.text ?? "").replace(/^\s+/, "") : "";
   const { data: signature } = useSignature(values.from);
-  const tailFor = (sig: string) => (sig ? `\n\n-- \n${sig}` : "") + (quote ? `\n\n${quote}` : "");
-  const tail = tailFor(signature?.text ?? "");
+  const tailFor = (sig: string) => [sig ? `-- \n${sig}` : "", quote].filter(Boolean).join("\n\n");
+  const [tail, setTail] = useState(quote);
   // Swap the signature in when it loads or the From address changes, unless the tail was edited.
-  const shownTail = useRef(quote ? `\n\n${quote}` : "");
+  const shownTail = useRef(quote);
   useEffect(() => {
     if (!signature) return;
     const next = tailFor(signature.text);
-    setValues((v) => {
-      const prev = shownTail.current;
-      if (!v.text.endsWith(prev)) return v;
+    setTail((t) => {
+      if (t !== shownTail.current) return t;
       shownTail.current = next;
-      return { ...v, text: v.text.slice(0, v.text.length - prev.length) + next };
+      return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature?.text, signature?.address]);
-  const written = (text: string) => (text.endsWith(shownTail.current) ? text.slice(0, text.length - shownTail.current.length) : text);
 
   // "Write with AI": writes above the signature and quote.
   const [instructions, setInstructions] = useState("");
@@ -96,7 +98,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   const writeWithAi = async () => {
     setDrafting(true);
     setError(null);
-    const above = written(values.text);
+    const above = written();
     try {
       const res = await fetch("/api/v1/draft", {
         method: "POST",
@@ -113,13 +115,9 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `Couldn't write a draft (${res.status})`);
-      setValues((v) => ({
-        ...v,
-        // A reply keeps its "Re:" subject; a new email takes the suggested one when it has none.
-        subject: draft.replyTo || v.subject.trim() ? v.subject : body.subject ?? v.subject,
-        text: body.text + (v.text.endsWith(shownTail.current) ? shownTail.current : tail),
-      }));
-      shownTail.current = shownTail.current && values.text.endsWith(shownTail.current) ? shownTail.current : tail;
+      // A reply keeps its "Re:" subject; a new email takes the suggested one when it has none.
+      setValues((v) => ({ ...v, subject: draft.replyTo || v.subject.trim() ? v.subject : body.subject ?? v.subject }));
+      editor?.chain().setContent(textToHtml(body.text), true).focus("end").run();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -128,13 +126,28 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   };
 
   const send = async () => {
+    // The message as both parts: formatted (the server cleans it) and plain, for older servers and API callers.
+    const formatted = editor && !editor.isEmpty ? editor.getHTML() : "";
+    const text = [written().trim(), tail.trim()].filter(Boolean).join("\n\n");
+    if (!text) {
+      setError("Write a message.");
+      editor?.commands.focus();
+      return;
+    }
     setSending(true);
     setError(null);
     try {
       const res = await fetch("/api/v1/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...values, replyTo: draft.replyTo, readReceipt, attachments: await Promise.all(files.map(encode)) }),
+        body: JSON.stringify({
+          ...values,
+          text,
+          html: formatted + textToHtml(tail),
+          replyTo: draft.replyTo,
+          readReceipt,
+          attachments: await Promise.all(files.map(encode)),
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message ?? body.error ?? `Not sent (${res.status})`);
@@ -226,22 +239,25 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
                 disabled={drafting || sending || (!draft.replyTo && !instructions.trim())}
               >
                 {drafting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-                {drafting ? "Writing…" : written(values.text).trim() ? "Redraft" : "Draft"}
+                {drafting ? "Writing…" : written().trim() ? "Redraft" : "Draft"}
               </Button>
             </div>
           </div>
-          <label className="grid gap-1">
+          <div className="grid gap-1">
             <span className={label}>Message</span>
-            <textarea
-              value={values.text}
-              onChange={set("text")}
-              rows={12}
-              required
-              autoFocus={!!draft.to}
-              onFocus={(e) => draft.replyTo && e.currentTarget.setSelectionRange(0, 0)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
+            <MessageEditor editor={editor} />
+          </div>
+          {tail && (
+            <label className="grid gap-1">
+              <span className={label}>{quote ? "Signature and quoted message" : "Signature"}</span>
+              <textarea
+                value={tail}
+                onChange={(e) => setTail(e.target.value)}
+                rows={Math.min(8, tail.split("\n").length + 1)}
+                className="rounded-md border border-input bg-muted/30 px-3 py-2 text-sm leading-relaxed text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+          )}
           <div className="grid gap-2">
             {files.length > 0 && (
               <ul className="flex flex-wrap gap-2" aria-label="Attachments">
