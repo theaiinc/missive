@@ -115,7 +115,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     try { localStorage.setItem(draftKey, JSON.stringify(value)); } catch { /* storage unavailable */ }
     try {
       const response = await fetch(`/api/v1/drafts${draft.id ? `/${encodeURIComponent(draft.id)}` : ""}`, {
-        method: draft.id ? "PUT" : "POST",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(value),
         keepalive: true,
