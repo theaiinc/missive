@@ -9,7 +9,7 @@ import { Loader2, Paperclip, Sparkles, X } from "lucide-react";
 import { formatSize } from "@/components/Attachments";
 
 /** What a new message starts with; a reply fills in the recipient, subject and quote. */
-export type Draft = { from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; replyTo?: string; fromName?: string };
+export type Draft = { id?: string; updatedAt?: string; from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; html?: string; replyTo?: string; threadId?: string; fromName?: string; mailboxId?: string; attachments?: Array<{ filename: string; mimeType: string; content?: string }> };
 
 const ComposeContext = createContext<(draft?: Draft) => void>(() => undefined);
 
