@@ -56,7 +56,36 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   const [sending, setSending] = useState(false);
   const [readReceipt, setReadReceipt] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
+  const draftKey = `missive.draft.${draft.id ?? "new"}`;
+  const latest = useRef<Draft>({ ...draft });
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(draftKey);
+      if (!stored) return;
+      const localDraft = JSON.parse(stored) as Draft;
+      const serverTime = draft.updatedAt ? Date.parse(draft.updatedAt) : 0;
+      const localTime = localDraft.updatedAt ? Date.parse(localDraft.updatedAt) : 0;
+      if (localTime <= serverTime) return;
+      setValues((current) => ({
+        ...current,
+        from: localDraft.from ?? current.from,
+        to: localDraft.to ?? current.to,
+        cc: localDraft.cc ?? current.cc,
+        bcc: localDraft.bcc ?? current.bcc,
+        subject: localDraft.subject ?? current.subject,
+      }));
+    } catch {
+      // Ignore malformed or unavailable local storage.
+    }
+  }, [draft, draftKey]);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // What follows what you write, as plain text: your signature for the From address, then a reply's quote.
+  const quote = draft.replyTo ? (draft.text ?? "").replace(/^\\s+/, "") : "";
+  const [tail, setTail] = useState(quote);
   const filesBytes = files.reduce((n, f) => n + f.size, 0);
   const addFiles = (list: FileList | null) => {
     if (!list?.length) return;
@@ -70,15 +99,54 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   };
   const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
 
+  const snapshot = useCallback((): Draft => ({
+    ...draft,
+    ...values,
+    text: [written(), tail].filter(Boolean).join("\\n\\n"),
+    html: (editor?.getHTML() ?? "") + textToHtml(tail),
+    attachments: files.map((file) => ({ filename: file.name, mimeType: file.type || "application/octet-stream" })),
+    updatedAt: new Date().toISOString(),
+  }), [draft, values, files, tail]);
+
+  const saveDraft = useCallback(async () => {
+    const value = snapshot();
+    latest.current = value;
+    setSaveState("saving");
+    try { localStorage.setItem(draftKey, JSON.stringify(value)); } catch { /* storage unavailable */ }
+    try {
+      const response = await fetch(`/api/v1/drafts${draft.id ? `/${encodeURIComponent(draft.id)}` : ""}`, {
+        method: draft.id ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(value),
+        keepalive: true,
+      });
+      if (response.ok) {
+        const saved = await response.json().catch(() => null);
+        if (saved?.id && !draft.id) draft.id = saved.id;
+      }
+    } catch { /* localStorage remains the offline copy */ }
+    setSaveState("saved");
+  }, [draft, draftKey, snapshot]);
+
+  useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void saveDraft(), 1500);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [values, tail, files, saveDraft]);
+
+  useEffect(() => {
+    const flush = () => { void saveDraft(); };
+    window.addEventListener("beforeunload", flush);
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("beforeunload", flush); window.removeEventListener("pagehide", flush); };
+  }, [saveDraft]);
+
   // What you write, formatted. A reply's draft.text is its quote, which goes below instead.
   const editor = useMessageEditor({ text: draft.replyTo ? "" : draft.text, autofocus: !!draft.to });
   const written = () => editorText(editor);
 
-  // What follows what you write, as plain text: your signature for the From address, then a reply's quote.
-  const quote = draft.replyTo ? (draft.text ?? "").replace(/^\s+/, "") : "";
   const { data: signature } = useSignature(values.from);
   const tailFor = (sig: string) => [sig ? `-- \n${sig}` : "", quote].filter(Boolean).join("\n\n");
-  const [tail, setTail] = useState(quote);
   // Swap the signature in when it loads or the From address changes, unless the tail was edited.
   const shownTail = useRef(quote);
   useEffect(() => {
@@ -152,6 +220,8 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message ?? body.error ?? `Not sent (${res.status})`);
       toast.success(`Sent to ${values.to}`);
+      if (draft.id) await fetch(`/api/v1/drafts/${encodeURIComponent(draft.id)}`, { method: "DELETE" }).catch(() => undefined);
+      try { localStorage.removeItem(draftKey); } catch { /* storage unavailable */ }
       onClose();
       // Refresh in the background; some queries (digest, organizer) are slow.
       void queryClient.invalidateQueries();
@@ -292,7 +362,18 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             </p>
           )}
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose} disabled={sending}>
+            <span className="mr-auto self-center text-xs text-muted-foreground" aria-live="polite">{saveState === "saving" ? "Saving…" : "Saved"}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={async () => {
+                if (!window.confirm("Discard this draft?")) return;
+                if (draft.id) await fetch(`/api/v1/drafts/${encodeURIComponent(draft.id)}`, { method: "DELETE" }).catch(() => undefined);
+                try { localStorage.removeItem(draftKey); } catch { /* storage unavailable */ }
+                onClose();
+              }}
+              disabled={sending}
+            >
               Discard
             </Button>
             <Button type="submit" disabled={sending || drafting || mailboxes.length === 0}>
