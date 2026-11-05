@@ -4,7 +4,8 @@ import { Pool } from "pg";
 import { PostgresService } from "../storage/postgres.service";
 import { runAsUser } from "../request-context";
 import { DraftsService } from "../drafts.service";
-import { encryptDrafts } from "../scripts/encrypt-drafts";
+import { encryptDrafts } from "../draft-backfill";
+import { EncryptionBackfillService } from "../encryption-backfill.service";
 import { cleanupEmptyDrafts } from "../scripts/cleanup-empty-drafts";
 
 /**
@@ -125,7 +126,26 @@ describe.skipIf(!url)("drafts encryption on Postgres", () => {
     expect(left).toEqual([uuid(1), uuid(10), uuid(12)]);
   });
 
+  it("the startup backfill converts plain drafts too, logging only counts", async () => {
+    await admin.query(
+      `INSERT INTO drafts (id, owner_id, mailbox, payload) VALUES ($1, $2, 'boot@example.com', $3::jsonb), ($4, $5, 'boot@example.com', '{}'::jsonb)`,
+      [uuid(20), A.id, JSON.stringify({ subject: SECRET }), uuid(21), B.id],
+    );
+    const encryptedBefore = await raw(uuid(1));
+    const backfill = new EncryptionBackfillService(pg, {} as never);
+    const from = logs.length;
+    await backfill.drafts();
+    expect(logs.slice(from)).toEqual(["drafts: encrypted 2 draft(s)"]);
+    for (const n of [20, 21]) expect((await raw(uuid(n))).payload).toMatch(/^mv1\./);
+    expect((await raw(uuid(21))).is_empty).toBe(true);
+    expect(await raw(uuid(1))).toEqual(encryptedBefore);
+    expect((await runAsUser(A, () => drafts().get(uuid(20))))?.payload).toEqual({ subject: SECRET });
+    // Again: nothing left to do, nothing logged.
+    await backfill.drafts();
+    expect(logs.slice(from)).toHaveLength(1);
+  });
+
   it("logged nothing of any draft", () => {
-    expect(logs.join("\n")).not.toMatch(/Secret|client@example|old@example|B's draft/);
+    expect(logs.join("\n")).not.toMatch(/Secret|client@example|old@example|boot@example|B's draft/);
   });
 });

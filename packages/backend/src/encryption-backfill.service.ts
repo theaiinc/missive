@@ -8,6 +8,7 @@ import { safeError } from "./log-safe";
 import { addressIndex, normalizeAddress, sealIdentity } from "./identity-crypto";
 import { ConnectorStore } from "./connector.store";
 import { ENCRYPTED_COLUMNS, type EncryptedTable } from "./storage/content-crypto";
+import { encryptDrafts } from "./draft-backfill";
 
 /**
  * Encrypts email data written before encryption existed. Runs once all
@@ -42,6 +43,7 @@ export class EncryptionBackfillService implements OnApplicationBootstrap {
     void (async () => {
       // attachments has only ever been written encrypted: scanning its content would read every file.
       for (const table of Object.keys(ENCRYPTED_COLUMNS) as EncryptedTable[]) if (table !== "attachments") await this.content(table);
+      await this.drafts();
     })().catch((err) => this.log.error(`content backfill stopped: ${safeError(err)}`));
   }
 
@@ -87,6 +89,17 @@ export class EncryptionBackfillService implements OnApplicationBootstrap {
       });
     }
     if (done) this.log.log(`${table}: encrypted ${done} row(s)`);
+  }
+
+  /**
+   * Compose drafts saved before drafts were encrypted: the same conversion as
+   * scripts/encrypt-drafts.ts (per user, batched, only rows still in the
+   * clear, never over a newer save). Logs counts and skipped ids only.
+   */
+  async drafts() {
+    let skipped = 0;
+    const r = await encryptDrafts(this.pg, { dryRun: false, onSkip: (id) => { skipped++; this.log.warn(`drafts: ${id} could not be read; left as it is`); } });
+    if (r.done || skipped) this.log.log(`drafts: encrypted ${r.done} draft(s)${skipped ? `, ${skipped} left unreadable` : ""}`);
   }
 
   private sealFor(userId: string, table: string, column: string, value: string): Promise<string> {
