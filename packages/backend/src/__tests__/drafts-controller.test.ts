@@ -1,6 +1,7 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, InternalServerErrorException } from "@nestjs/common";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DraftsController } from "../drafts.controller";
+import { DraftUnreadableError } from "../draft-crypto";
 
 const requireUser = vi.hoisted(() => vi.fn(() => ({ id: "user-1" })));
 
@@ -88,6 +89,14 @@ describe("DraftsController list, read and delete", () => {
     const { controller, drafts } = setup();
     drafts.get.mockResolvedValue(null);
     await expect(controller.get(ID)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("answers a draft that doesn't decrypt with a clear error and nothing of the draft", async () => {
+    const { controller, drafts } = setup();
+    drafts.get.mockRejectedValue(new DraftUnreadableError(ID));
+    const error = await controller.get(ID).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(InternalServerErrorException);
+    expect((error as Error).message).toBe("This draft can't be opened: it failed to decrypt");
   });
 
   it("deletes your draft", async () => {

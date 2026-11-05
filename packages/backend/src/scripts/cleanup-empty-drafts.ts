@@ -2,7 +2,9 @@
  * One-off: deletes the empty compose drafts the autosave of #71 created (one
  * each time Compose opened, nothing typed). Empty means isEmptyDraftPayload:
  * no recipients, subject, body or attachment. Only drafts untouched for an
- * hour go, so nothing someone has open right now is removed.
+ * hour go, so nothing someone has open right now is removed. Drafts are
+ * encrypted, so it goes by is_empty, recorded when each was saved; it never
+ * needs MISSIVE_DATA_KEY (see EMPTY_DRAFT_SQL).
  *
  *   DATABASE_URL=postgresql://... pnpm --filter @theaiinc/missive-backend exec tsx src/scripts/cleanup-empty-drafts.ts --dry-run
  *
