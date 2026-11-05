@@ -29,6 +29,7 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
+  FilePen,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
@@ -47,6 +48,7 @@ import { ConnectionAlert } from "@/components/ConnectionAlert";
 import { ComposeProvider, useCompose } from "./Compose";
 import { setAppBadge } from "../lib/badge";
 import { apiJson } from "@/lib/api";
+import { useDrafts } from "@/pages/Drafts";
 
 const folderIcons: Record<string, React.ElementType> = {
   inbox: InboxIcon,
@@ -135,6 +137,8 @@ function LayoutShell() {
     refetchInterval: 30_000,
     refetchIntervalInBackground: true,
   });
+  const { data: drafts } = useDrafts();
+  const draftCount = drafts?.length ?? 0;
   const inboxUnread = folders?.find((f) => f.slug === "inbox")?.missiveCount;
   useEffect(() => {
     if (inboxUnread !== undefined) setAppBadge(inboxUnread);
@@ -338,6 +342,33 @@ function LayoutShell() {
               </button>
             );
           })}
+
+          <NavLink
+            to="/drafts"
+            title={collapsed ? `Drafts${draftCount ? ` (${draftCount})` : ""}` : undefined}
+            aria-label={collapsed ? "Drafts" : undefined}
+            className={({ isActive }) =>
+              cn(
+                navRow(collapsed),
+                isActive
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              )
+            }
+          >
+            <span className="relative shrink-0">
+              <FilePen className="w-4 h-4" />
+              {collapsed && draftCount > 0 && (
+                <span className="absolute -top-1.5 -right-2 min-w-[1rem] h-4 px-1 rounded-full bg-muted-foreground text-background text-[9px] leading-4 text-center tabular-nums">
+                  {draftCount > 99 ? "99+" : draftCount}
+                </span>
+              )}
+            </span>
+            {!collapsed && <span className="flex-1 truncate">Drafts</span>}
+            {!collapsed && draftCount > 0 && (
+              <span className="text-[11px] font-medium text-muted-foreground tabular-nums">{draftCount}</span>
+            )}
+          </NavLink>
 
           {/* New folder inline input */}
           {showNewFolder && !collapsed ? (

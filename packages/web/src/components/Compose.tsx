@@ -8,9 +8,11 @@ import { useSenders, useSignature } from "@/hooks/useMe";
 import { Loader2, Paperclip, Sparkles, X } from "lucide-react";
 import { formatSize } from "@/components/Attachments";
 import { MessageEditor, editorText, textToHtml, useMessageEditor } from "@/components/MessageEditor";
+import { DraftSaver, draftFromStored, draftIsEmpty, putDraft, type ComposeDraft, type DraftAttachment, type DraftBody, type SaveStatus } from "@/lib/draftSaver";
 
-/** What a new message starts with; a reply fills in the recipient, subject and quote. */
-export type Draft = { id?: string; updatedAt?: string; from?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; html?: string; replyTo?: string; threadId?: string; fromName?: string; mailboxId?: string; attachments?: Array<{ filename: string; mimeType: string; content?: string }> };
+/** What a new message starts with (see ComposeDraft); draftFromStored makes one from a saved draft. */
+export type Draft = ComposeDraft;
+export { draftFromStored };
 
 const ComposeContext = createContext<(draft?: Draft) => void>(() => undefined);
 
@@ -53,11 +55,17 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     subject: draft.subject ?? "",
   });
   const [error, setError] = useState<string | null>(null);
+  // An error shows below the fields; bring it into view when it appears.
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [error]);
   const [sending, setSending] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(draft.id ? "saved" : "saving");
-  const [draftId, setDraftId] = useState(draft.id);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>(draft.id ? "saved" : "idle");
   const [readReceipt, setReadReceipt] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  // Files a reopened draft had: drafts keep their names, not their contents.
+  const [reattach, setReattach] = useState<DraftAttachment[]>(draft.attachments ?? []);
   const fileInput = useRef<HTMLInputElement>(null);
   const filesBytes = files.reduce((n, f) => n + f.size, 0);
   const addFiles = (list: FileList | null) => {
@@ -68,9 +76,18 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       return;
     }
     setError(null);
+    touched.current = true;
     setFiles(next);
   };
-  const set = (key: keyof typeof values) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: e.target.value }));
+  // Nothing is saved until you change something: opening Compose (or a draft) and closing it saves nothing.
+  const touched = useRef(false);
+  const touch = () => {
+    touched.current = true;
+  };
+  const set = (key: keyof typeof values) => (e: { target: { value: string } }) => {
+    touch();
+    setValues((v) => ({ ...v, [key]: e.target.value }));
+  };
 
   // What you write, formatted. A reply's draft.text is its quote, which goes below instead.
   const editor = useMessageEditor({ text: draft.replyTo ? "" : draft.text, autofocus: !!draft.to });
@@ -80,13 +97,28 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     if (editor && draft.html) editor.commands.setContent(draft.html, false);
   }, [editor, draft.html]);
 
+  // Typing in the editor (or an AI draft landing in it) counts as a change.
+  const [editorVersion, setEditorVersion] = useState(0);
+  useEffect(() => {
+    if (!editor) return;
+    const onUpdate = () => {
+      touch();
+      setEditorVersion((n) => n + 1);
+    };
+    editor.on("update", onUpdate);
+    return () => {
+      editor.off("update", onUpdate);
+    };
+  }, [editor]);
+
   // What follows what you write, as plain text: your signature for the From address, then a reply's quote.
   const quote = draft.replyTo ? (draft.text ?? "").replace(/^\s+/, "") : "";
   const { data: signature } = useSignature(values.from);
   const tailFor = (sig: string) => [sig ? `-- \n${sig}` : "", quote].filter(Boolean).join("\n\n");
-  const [tail, setTail] = useState(quote);
+  const [tail, setTail] = useState(draft.tail ?? quote);
   // Swap the signature in when it loads or the From address changes, unless the tail was edited.
-  const shownTail = useRef(quote);
+  // A reopened draft keeps the tail it was saved with.
+  const shownTail = useRef<string | null>(draft.tail !== undefined ? null : quote);
   useEffect(() => {
     if (!signature) return;
     const next = tailFor(signature.text);
@@ -131,53 +163,87 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     }
   };
 
-  const saveDraft = useCallback(async (keepalive = false) => {
-    if (sending || !values.from) return;
-    setSaveStatus("saving");
-    const payload = {
+  // The draft as saved: everything needed to reopen it as it is now.
+  const body = (): DraftBody => ({
+    mailbox: values.from,
+    payload: {
       ...values,
       html: editor && !editor.isEmpty ? editor.getHTML() : "",
       text: [written().trim(), tail.trim()].filter(Boolean).join("\n\n"),
+      tail,
+      quote: quote || undefined,
       replyTo: draft.replyTo,
       threadId: draft.threadId,
       fromName: draft.fromName,
       mailboxId: draft.mailboxId,
-      attachments: files.map((file) => ({ filename: file.name, mimeType: file.type, size: file.size })),
-    };
-    try {
-      const res = await fetch(draftId ? `/api/v1/drafts/${draftId}` : "/api/v1/drafts", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        keepalive,
-        body: JSON.stringify({ mailbox: values.from, payload }),
-      });
-      if (!res.ok) throw new Error(`Draft save failed (${res.status})`);
-      const saved = await res.json();
-      if (!draftId && saved.id) setDraftId(saved.id);
-      setSaveStatus("saved");
-    } catch {
-      setSaveStatus("error");
-    }
-  }, [draft.fromName, draft.mailboxId, draft.replyTo, draft.threadId, draftId, editor, files, sending, tail, values]);
+      attachments: [...reattach, ...files.map((file) => ({ filename: file.name, mimeType: file.type, size: file.size }))],
+    },
+  });
+  const bodyRef = useRef(body);
+  bodyRef.current = body;
+  const sendingRef = useRef(false);
+
+  // One saver per window: change detection, one save at a time, retries (lib/draftSaver.ts).
+  // It outlives the window, so a save that failed keeps retrying after you close it.
+  const [saver] = useState(() => new DraftSaver({ id: draft.id, saved: draft.saved, request: putDraft, onStatus: setSaveStatus }));
+  const canSave = () => touched.current && !sendingRef.current && !!values.from;
+  const saveDraft = (options?: { now?: boolean }) => (canSave() ? saver.save(bodyRef.current(), options) : Promise.resolve());
 
   useEffect(() => {
+    if (!touched.current) return;
     const timer = window.setTimeout(() => void saveDraft(), 1500);
     return () => window.clearTimeout(timer);
-  }, [saveDraft, values, tail, editor?.getHTML(), files]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values, tail, files, reattach, editorVersion]);
 
+  // Leaving or hiding the page: save now, with keepalive so it gets there even as the page goes.
   useEffect(() => {
-    const flush = () => void saveDraft(true);
+    const flush = () => {
+      if (canSave()) saver.flush(bodyRef.current());
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    // Still unsaved (offline, or the save is still on its way): ask before the page goes.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (canSave() && (saver.isUnsaved(bodyRef.current()) || saver.retrying)) e.preventDefault();
+    };
     window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", flush);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("pagehide", flush);
-      document.removeEventListener("visibilitychange", flush);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [saveDraft]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saver]);
 
+  const refreshDrafts = () => void queryClient.invalidateQueries({ queryKey: ["drafts"] });
+
+  // Closing keeps the draft (find it under Drafts).
   const close = async () => {
     if (sending) return;
-    await saveDraft();
+    await saveDraft({ now: true });
+    if (canSave() && (saver.retrying || saver.isUnsaved(bodyRef.current()))) {
+      toast.warning("Your draft isn't saved yet. Missive keeps trying while this tab is open.");
+    }
+    refreshDrafts();
+    onClose();
+  };
+
+  // Discarding deletes the draft, after asking if there's anything in it (a fresh reply's prefilled fields don't count).
+  const discard = async () => {
+    if (sending) return;
+    const current = bodyRef.current();
+    if ((touched.current || saver.exists) && !draftIsEmpty(current.payload) && !window.confirm("Discard this draft? What you wrote will be deleted.")) return;
+    saver.stop();
+    await saver.settled();
+    if (saver.exists) {
+      const res = await fetch(`/api/v1/drafts/${encodeURIComponent(saver.id)}`, { method: "DELETE" }).catch(() => null);
+      if (!res || (!res.ok && res.status !== 403)) toast.error("Couldn't delete the draft. It's still under Drafts.");
+    }
+    refreshDrafts();
     onClose();
   };
 
@@ -190,7 +256,12 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       editor?.commands.focus();
       return;
     }
+    if (reattach.length) {
+      setError(`Attach ${reattach.map((a) => a.filename).join(", ")} again, or remove ${reattach.length === 1 ? "it" : "them"}: drafts keep a file's name, not the file.`);
+      return;
+    }
     setSending(true);
+    sendingRef.current = true;
     setError(null);
     try {
       const res = await fetch("/api/v1/send", {
@@ -207,7 +278,11 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message ?? body.error ?? `Not sent (${res.status})`);
-      if (draftId) await fetch(`/api/v1/drafts/${draftId}`, { method: "DELETE" });
+      // Sent: the draft goes. Wait for a save on its way first, or it would bring the draft back.
+      saver.stop();
+      await saver.settled();
+      if (saver.exists) await fetch(`/api/v1/drafts/${encodeURIComponent(saver.id)}`, { method: "DELETE" }).catch(() => undefined);
+      refreshDrafts();
       toast.success(`Sent to ${values.to}`);
       onClose();
       // Refresh in the background; some queries (digest, organizer) are slow.
@@ -216,6 +291,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   };
 
@@ -228,10 +304,11 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
         onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); addFiles(e.dataTransfer.files); }}
       >
         <DialogHeader className="sticky top-0 z-10 bg-background">
-          <div className="flex items-center justify-between gap-3">
+          {/* pr-6 keeps the status clear of the dialog's close button. */}
+          <div className="flex items-center justify-between gap-3 pr-6">
             <DialogTitle>{draft.replyTo ? "Reply" : "New message"}</DialogTitle>
             <span className="text-xs text-muted-foreground" role="status" aria-label="Draft save status">
-              {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Couldn't save, retrying" : "Saved"}
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Couldn't save, retrying" : saveStatus === "saved" ? "Saved to Drafts" : ""}
             </span>
           </div>
           {mailboxes.length === 0 && (
@@ -315,13 +392,30 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
               <span className={label}>{quote ? "Signature and quoted message" : "Signature"}</span>
               <textarea
                 value={tail}
-                onChange={(e) => setTail(e.target.value)}
+                onChange={(e) => { touch(); setTail(e.target.value); }}
                 rows={Math.min(8, tail.split("\n").length + 1)}
                 className="rounded-md border border-input bg-muted/30 px-3 py-2 text-sm leading-relaxed text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
           )}
           <div className="grid gap-2">
+            {reattach.length > 0 && (
+              <div className="grid gap-1.5">
+                <p className="text-xs text-muted-foreground">Attached before; attach again to send (drafts keep a file's name, not the file):</p>
+                <ul className="flex flex-wrap gap-2" aria-label="Files to attach again">
+                  {reattach.map((a, i) => (
+                    <li key={`${a.filename}-${i}`} className="flex items-center gap-1.5 rounded-md border border-dashed border-border pl-2 pr-1 py-1 text-xs text-muted-foreground max-w-full">
+                      <Paperclip className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate max-w-[14rem]">{a.filename}</span>
+                      {a.size !== undefined && <span className="shrink-0">{formatSize(a.size)}</span>}
+                      <button type="button" onClick={() => { touch(); setReattach(reattach.filter((_, j) => j !== i)); }} className="p-0.5 hover:text-foreground" aria-label={`Remove ${a.filename}`}>
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {files.length > 0 && (
               <ul className="flex flex-wrap gap-2" aria-label="Attachments">
                 {files.map((f, i) => (
@@ -329,7 +423,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
                     <Paperclip className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate max-w-[14rem]">{f.name}</span>
                     <span className="text-muted-foreground shrink-0">{formatSize(f.size)}</span>
-                    <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="p-0.5 text-muted-foreground hover:text-foreground" aria-label={`Remove ${f.name}`}>
+                    <button type="button" onClick={() => { touch(); setFiles(files.filter((_, j) => j !== i)); }} className="p-0.5 text-muted-foreground hover:text-foreground" aria-label={`Remove ${f.name}`}>
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </li>
@@ -350,12 +444,12 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
             Request a read receipt
           </label>
           {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p ref={errorRef} role="alert" className="text-sm text-destructive">
               {error}
             </p>
           )}
           <DialogFooter className="sticky bottom-0 z-10 bg-background pt-2">
-            <Button type="button" variant="ghost" onClick={() => void close()} disabled={sending}>
+            <Button type="button" variant="ghost" onClick={() => void discard()} disabled={sending}>
               Discard
             </Button>
             <Button type="submit" disabled={sending || drafting || mailboxes.length === 0}>

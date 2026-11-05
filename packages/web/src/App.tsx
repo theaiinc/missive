@@ -5,6 +5,7 @@ import { ThreadView } from "./pages/ThreadView";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { Rules } from "./pages/Rules";
+import { Drafts } from "./pages/Drafts";
 import { Admin } from "./pages/Admin";
 import { Calendar } from "./pages/Calendar";
 import { OAuthCallback } from "./pages/OAuthCallback";
@@ -21,6 +22,7 @@ export function App() {
             <Route path="/" element={<Navigate to="/inbox" replace />} />
             <Route path="/inbox" element={<Inbox />} />
             <Route path="/thread/:id" element={<ThreadView />} />
+            <Route path="/drafts" element={<Drafts />} />
             <Route path="/search" element={<Search />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/rules" element={<Rules />} />
