@@ -54,6 +54,8 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   });
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(draft.id ? "saved" : "saving");
+  const [draftId, setDraftId] = useState(draft.id);
   const [readReceipt, setReadReceipt] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -73,6 +75,10 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   // What you write, formatted. A reply's draft.text is its quote, which goes below instead.
   const editor = useMessageEditor({ text: draft.replyTo ? "" : draft.text, autofocus: !!draft.to });
   const written = () => editorText(editor);
+
+  useEffect(() => {
+    if (editor && draft.html) editor.commands.setContent(draft.html, false);
+  }, [editor, draft.html]);
 
   // What follows what you write, as plain text: your signature for the From address, then a reply's quote.
   const quote = draft.replyTo ? (draft.text ?? "").replace(/^\s+/, "") : "";
@@ -125,6 +131,56 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
     }
   };
 
+  const saveDraft = useCallback(async (keepalive = false) => {
+    if (sending || !values.from) return;
+    setSaveStatus("saving");
+    const payload = {
+      ...values,
+      html: editor && !editor.isEmpty ? editor.getHTML() : "",
+      text: [written().trim(), tail.trim()].filter(Boolean).join("\n\n"),
+      replyTo: draft.replyTo,
+      threadId: draft.threadId,
+      fromName: draft.fromName,
+      mailboxId: draft.mailboxId,
+      attachments: files.map((file) => ({ filename: file.name, mimeType: file.type, size: file.size })),
+    };
+    try {
+      const res = await fetch(draftId ? `/api/v1/drafts/${draftId}` : "/api/v1/drafts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        keepalive,
+        body: JSON.stringify({ mailbox: values.from, payload }),
+      });
+      if (!res.ok) throw new Error(`Draft save failed (${res.status})`);
+      const saved = await res.json();
+      if (!draftId && saved.id) setDraftId(saved.id);
+      setSaveStatus("saved");
+    } catch {
+      setSaveStatus("error");
+    }
+  }, [draft.fromName, draft.mailboxId, draft.replyTo, draft.threadId, draftId, editor, files, sending, tail, values]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void saveDraft(), 1500);
+    return () => window.clearTimeout(timer);
+  }, [saveDraft, values, tail, editor?.getHTML(), files]);
+
+  useEffect(() => {
+    const flush = () => void saveDraft(true);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
+  }, [saveDraft]);
+
+  const close = async () => {
+    if (sending) return;
+    await saveDraft();
+    onClose();
+  };
+
   const send = async () => {
     // The message as both parts: formatted (the server cleans it) and plain, for older servers and API callers.
     const formatted = editor && !editor.isEmpty ? editor.getHTML() : "";
@@ -151,6 +207,7 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message ?? body.error ?? `Not sent (${res.status})`);
+      if (draftId) await fetch(`/api/v1/drafts/${draftId}`, { method: "DELETE" });
       toast.success(`Sent to ${values.to}`);
       onClose();
       // Refresh in the background; some queries (digest, organizer) are slow.
@@ -163,21 +220,27 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
   };
 
   return (
-    <Dialog open onOpenChange={(isOpen) => !isOpen && !sending && onClose()}>
+    <Dialog open onOpenChange={(isOpen) => !isOpen && void close()}>
       <DialogContent
-        className="sm:max-w-2xl"
+        className="sm:max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col"
         // Files dropped anywhere on the window are attached.
         onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
         onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); addFiles(e.dataTransfer.files); }}
       >
-        <DialogHeader>
-          <DialogTitle>{draft.replyTo ? "Reply" : "New message"}</DialogTitle>
+        <DialogHeader className="sticky top-0 z-10 bg-background">
+          <div className="flex items-center justify-between gap-3">
+            <DialogTitle>{draft.replyTo ? "Reply" : "New message"}</DialogTitle>
+            <span className="text-xs text-muted-foreground" role="status" aria-label="Draft save status">
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Couldn't save, retrying" : "Saved"}
+            </span>
+          </div>
           {mailboxes.length === 0 && (
             <DialogDescription>You don't have a mailbox to send from yet. Ask an admin to create one for you.</DialogDescription>
           )}
         </DialogHeader>
         <form
-          className="grid gap-3"
+          className="grid min-h-0 gap-3 overflow-y-auto pr-1"
+          onBlur={() => void saveDraft()}
           onSubmit={(e) => {
             e.preventDefault();
             send();
@@ -291,8 +354,8 @@ function ComposeDialog({ draft, onClose }: { draft: Draft; onClose: () => void }
               {error}
             </p>
           )}
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose} disabled={sending}>
+          <DialogFooter className="sticky bottom-0 z-10 bg-background pt-2">
+            <Button type="button" variant="ghost" onClick={() => void close()} disabled={sending}>
               Discard
             </Button>
             <Button type="submit" disabled={sending || drafting || mailboxes.length === 0}>

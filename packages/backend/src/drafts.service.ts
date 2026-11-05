@@ -25,6 +25,16 @@ export class DraftsService {
     return result.rows.map((row) => this.map(row));
   }
 
+  async get(id: string): Promise<StoredDraft | null> {
+    const user = requireUser();
+    const result = await this.db.query(
+      `SELECT id, mailbox, payload, updated_at, created_at
+         FROM drafts WHERE id = $1 AND owner_id = $2`,
+      [id, user.id],
+    );
+    return result.rows[0] ? this.map(result.rows[0]) : null;
+  }
+
   async upsert(input: {
     id?: string;
     mailbox: string;
