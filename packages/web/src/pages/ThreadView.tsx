@@ -259,6 +259,7 @@ function EmailCard({ missive }: { missive: Missive }) {
         .map((l) => `> ${l}`)
         .join("\n")}`,
       replyTo: missive.id,
+      threadId: missive.threadId,
       fromName: me?.name,
     });
   };

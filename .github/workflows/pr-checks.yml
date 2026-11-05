@@ -28,5 +28,8 @@ jobs:
       - name: Run backend tests
         run: pnpm --filter @theaiinc/missive-backend test
 
+      - name: Run web tests
+        run: pnpm --filter @theaiinc/missive-web test
+
       - name: Build web
         run: pnpm --filter @theaiinc/missive-web build
