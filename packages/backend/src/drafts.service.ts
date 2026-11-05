@@ -40,7 +40,7 @@ export class DraftsService {
     mailbox: string;
     payload: Record<string, unknown>;
     updatedAt?: string;
-  }): Promise<StoredDraft> {
+  }): Promise<StoredDraft | null> {
     const user = requireUser();
     const id = input.id ?? randomUUID();
     const result = await this.db.query(
@@ -54,13 +54,15 @@ export class DraftsService {
        RETURNING id, mailbox, payload, updated_at, created_at`,
       [id, user.id, input.mailbox, JSON.stringify(input.payload), input.updatedAt ?? null],
     );
-    if (!result.rows[0]) throw new Error("Draft does not exist or belongs to another user");
-    return this.map(result.rows[0]);
+    // No row: the id is someone else's draft (the conflict's WHERE refused it).
+    return result.rows[0] ? this.map(result.rows[0]) : null;
   }
 
-  async remove(id: string): Promise<void> {
+  /** False when there's no such draft of yours. */
+  async remove(id: string): Promise<boolean> {
     const user = requireUser();
-    await this.db.query("DELETE FROM drafts WHERE id = $1 AND owner_id = $2", [id, user.id]);
+    const result = await this.db.query("DELETE FROM drafts WHERE id = $1 AND owner_id = $2", [id, user.id]);
+    return (result.rowCount ?? 0) > 0;
   }
 
   private map(row: any): StoredDraft {
