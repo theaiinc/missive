@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, Put, BadRequestException } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, InternalServerErrorException, Param, Put, BadRequestException } from "@nestjs/common";
 import { DraftsService } from "./drafts.service";
 import { GroupsService } from "./groups.service";
 import { GmailSendService } from "./gmail-send.service";
 import { requireUser } from "./request-context";
 import { isEmptyDraftPayload } from "./draft-content";
+import { DraftUnreadableError } from "./draft-crypto";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NOT_YOURS = "Draft does not exist or belongs to another user";
@@ -50,7 +51,11 @@ export class DraftsController {
   @Get(":id")
   async get(@Param("id") id: string) {
     this.checkId(id);
-    const draft = await this.drafts.get(id);
+    const draft = await this.drafts.get(id).catch((error) => {
+      // Stored drafts are encrypted; one that doesn't decrypt is never returned, even in part.
+      if (error instanceof DraftUnreadableError) throw new InternalServerErrorException("This draft can't be opened: it failed to decrypt");
+      throw error;
+    });
     if (!draft) throw new ForbiddenException(NOT_YOURS);
     return draft;
   }
