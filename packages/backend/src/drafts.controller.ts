@@ -22,6 +22,13 @@ export class DraftsController {
     return this.drafts.list();
   }
 
+  @Get(":id")
+  async get(@Param("id") id: string) {
+    const draft = await this.drafts.get(id);
+    if (!draft) throw new ForbiddenException("Draft does not exist or belongs to another user");
+    return draft;
+  }
+
   @Put(":id")
   async upsert(@Param("id") id: string, @Body() body: { mailbox?: string; payload?: Record<string, unknown>; updatedAt?: string }) {
     const input = await this.validateDraftInput(body);
