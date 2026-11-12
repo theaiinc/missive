@@ -100,7 +100,8 @@ export class MissiveController {
         Object.entries(timing).map(([k, v]) => `${k};dur=${v}`).join(", "),
       );
     }
-    return result;
+    // Also in the body: Cloudflare doesn't pass the header through.
+    return timing ? { ...result, timing } : result;
   }
 
   @Get("organizer-status")
