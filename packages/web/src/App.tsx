@@ -8,6 +8,7 @@ import { Rules } from "./pages/Rules";
 import { Drafts } from "./pages/Drafts";
 import { Admin } from "./pages/Admin";
 import { Calendar } from "./pages/Calendar";
+import { Chat } from "./pages/Chat";
 import { OAuthCallback } from "./pages/OAuthCallback";
 import { ChatProvider } from "./hooks/useChat";
 import { NotificationProvider } from "./hooks/useNotificationContext";
@@ -24,6 +25,8 @@ export function App() {
             <Route path="/thread/:id" element={<ThreadView />} />
             <Route path="/drafts" element={<Drafts />} />
             <Route path="/search" element={<Search />} />
+            <Route path="/chat" element={<Chat />} />
+            <Route path="/chat/:id" element={<Chat />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/rules" element={<Rules />} />
             <Route path="/settings" element={<Settings />} />

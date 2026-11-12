@@ -39,11 +39,13 @@ import { ApiTokensController, ApiTokensService } from "./auth/api-tokens";
 import { ApiTokenGrantController } from "./auth/api-token-grant";
 import { DraftsController } from "./drafts.controller";
 import { DraftsService } from "./drafts.service";
+import { ChatAppsController } from "./chat-apps.controller";
+import { ChatAppsService } from "./chat-apps.service";
 
 @Module({
   imports: [EventEmitterModule.forRoot(), StorageModule],
-  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController, SignatureController, ImagesController, AttachmentsController, ClientErrorsController, DraftsController],
-  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService, GmailSendService, SignatureService, ImagesService, DraftsService],
+  controllers: [AuthController, MailboxController, InviteController, AdminController, MissiveController, ConnectorController, FolderController, ChatController, RuleController, DigestController, SystemEventController, CalendarController, PushController, ApiTokensController, ApiTokenGrantController, SignatureController, ImagesController, AttachmentsController, ClientErrorsController, DraftsController, ChatAppsController],
+  providers: [UsersService, GroupsService, AdminAccess, MailboxService, MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, SyncScheduler, ConnectorStore, OrganizerService, SystemEventService, EncryptionBackfillService, CalendarService, PushService, ApiTokensService, GmailSendService, SignatureService, ImagesService, DraftsService, ChatAppsService],
   exports: [MissiveService, SearchService, ChatService, RuleService, SyncService, ImapSyncService, ConnectorStore, OrganizerService, SystemEventService],
 })
 export class AppModule implements NestModule {
