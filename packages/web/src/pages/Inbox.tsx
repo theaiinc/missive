@@ -143,7 +143,8 @@ export function Inbox() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: `Search my communications for: "${query}". Summarize what you find based on the available context in my inbox. Be concise.`,
+          message: `Search my mail for: "${query}". Answer from the matching messages: who sent them, when, and what they say. Be concise.`,
+          search: query,
         }),
         signal: abort.signal,
       });

@@ -22,7 +22,7 @@ export class ChatController {
 
   @Post("stream")
   async streamChat(
-    @Body() body: { message: string },
+    @Body() body: { message: string; search?: string },
     @Res() res: Response
   ) {
     if (!body.message?.trim()) {
@@ -35,7 +35,11 @@ export class ChatController {
     ];
 
     try {
-      await this.chat.streamChat(messages, res);
+      await this.chat.streamChat(
+        messages,
+        res,
+        typeof body.search === "string" ? body.search.slice(0, 500) : undefined,
+      );
     } catch {
       if (!res.headersSent) {
         res

@@ -16,6 +16,28 @@ interface ToolResult {
   data?: any;
 }
 
+/** How many matching messages an AI search hands the model. */
+const AI_SEARCH_MESSAGES = 15;
+/** Body excerpt per message (characters). */
+const AI_EXCERPT_CHARS = 400;
+
+const STOPWORDS = new Set(
+  ("the and for from with about any all are was were has have had did does what when where who whom which why how " +
+    "that this these those there their them they you your mine find show list give tell me my our email emails mail " +
+    "message messages thread threads inbox sent send got get any some last latest recent recently week month year " +
+    "today yesterday into onto over under than then just also can could would should will please search look").split(" "),
+);
+
+/** The words of a plain-language question worth matching against mail. */
+export function searchTerms(question: string): string[] {
+  const words = question
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}@._+-]+/u)
+    .map((w) => w.replace(/^[._-]+|[._-]+$/g, ""))
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  return [...new Set(words)].slice(0, 12);
+}
+
 @Injectable()
 export class ChatService {
   private readonly baseUrl: string;
@@ -244,7 +266,7 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
   }
 
   /** Build a dynamic system message with the current app context. */
-  private async buildSystemPrompt(): Promise<string> {
+  private async buildSystemPrompt(search?: string): Promise<string> {
     const parts: string[] = [
       "You are Missive AI, an intelligent communication assistant integrated into the Missive platform. You help users manage their communications — emails, chat messages, tickets, and more. Be concise, helpful, and professional.",
       "",
@@ -354,10 +376,42 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
       // Silently skip
     }
 
+    if (search?.trim()) {
+      parts.push(await this.searchContext(search));
+    }
+
     parts.push("\nRespond helpfully. Use the context above to answer questions about the user's inbox. When asked to summarize or find something, use the information provided. Suggest rules or actions based on what you see in the user's messages.");
 
     parts.push("\n" + this.getToolDefinitions());
     return parts.join("\n");
+  }
+
+  /**
+   * The messages that best match an AI search, with sender, date and an
+   * excerpt, so the model answers from the user's mail rather than from the
+   * handful of recent subjects above.
+   */
+  private async searchContext(search: string): Promise<string> {
+    const terms = searchTerms(search);
+    try {
+      const found = await this.storage.searchByTerms(terms, AI_SEARCH_MESSAGES);
+      if (found.length === 0) {
+        return `\nMessages matching the search (${terms.join(", ")}): none found. Say so plainly; don't invent messages.`;
+      }
+      const lines = found.map((m) => {
+        const from = m.from.name ? `${m.from.name} <${m.from.address}>` : m.from.address;
+        const date = new Date(m.receivedAt).toISOString().slice(0, 10);
+        const excerpt = String(m.body ?? "").replace(/\s+/g, " ").trim().slice(0, AI_EXCERPT_CHARS);
+        return `- [${date}] From: ${from} | Subject: ${m.subject ?? "(no subject)"} | Folder: ${m.folder ?? "inbox"}\n  ${excerpt}`;
+      });
+      return [
+        `\nMessages matching the search (terms: ${terms.join(", ")}; best matches first, ${found.length} shown):`,
+        ...lines,
+        "Answer from these messages: name senders, dates and specifics. If none of them answer the question, say so.",
+      ].join("\n");
+    } catch {
+      return "\nMatching messages: unavailable.";
+    }
   }
 
   private async fetchWithTimeout(
@@ -390,9 +444,10 @@ Only call tools when explicitly requested by the user. When you call a tool, inc
   /** Stream a chat completion from LM Studio, writing SSE chunks to `res`. */
   async streamChat(
     messages: ChatMessage[],
-    res: any
+    res: any,
+    search?: string,
   ): Promise<void> {
-    const systemContent = await this.buildSystemPrompt();
+    const systemContent = await this.buildSystemPrompt(search);
     const systemMessage: ChatMessage = {
       role: "system",
       content: systemContent,

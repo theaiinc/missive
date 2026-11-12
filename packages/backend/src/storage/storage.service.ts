@@ -42,6 +42,37 @@ export const MISSIVE_LIST_COLUMNS = `id, thread_id, channel, direction, provider
   status, classification, entity_ids, received_at, created_at, updated_at, account_email,
   folder, rules_evaluated_at, organizations, projects, owner_id`;
 
+/** Decrypted, lowercased text of one message, for search. */
+type SearchEntry = { updatedAt: number; text: string; from: string; to: string[] };
+/** Shared by every user; keys are owner_id:message id. */
+const searchCache = new Map<string, SearchEntry>();
+/** ~4 KB a message: about 200 MB at most before it starts over. */
+const SEARCH_CACHE_MAX = 50_000;
+
+function toSearchEntry(r: any, updatedAt: number): SearchEntry {
+  let recipients: unknown = r.recipients;
+  if (typeof recipients === "string") {
+    try {
+      recipients = JSON.parse(recipients);
+    } catch {}
+  }
+  const to = Array.isArray(recipients)
+    ? recipients
+        .map((x: any) => String(x?.address ?? x ?? "").toLowerCase())
+        .filter(Boolean)
+    : [];
+  const names = Array.isArray(recipients)
+    ? recipients.map((x: any) => String(x?.name ?? "")).join(" ")
+    : String(recipients ?? "");
+  // Free text matches who it's from and to as well as subject and body
+  // ("byteplus" finds mail from BytePlus <noreply@byteplus.com>).
+  const text = [r.subject, r.body, r.sender_name, r.sender_address, names, to.join(" ")]
+    .map((v) => String(v ?? ""))
+    .join("\n")
+    .toLowerCase();
+  return { updatedAt, text, from: String(r.sender_address ?? "").toLowerCase(), to };
+}
+
 @Injectable()
 export class StorageService {
   constructor(private readonly pg: PostgresService) {}
@@ -332,60 +363,25 @@ export class StorageService {
     const from = query.from?.trim().toLowerCase();
     const to = query.to?.trim().toLowerCase();
     if (text || from || to) {
-      // Decrypt this user's candidate rows (already narrowed by folder,
-      // channel, dates, ...) and match in memory, as ILIKE '%…%' did. With no
-      // folder given, search spans every folder but Spam and deleted mail.
+      // Content columns are encrypted, so the database can't match them.
+      // SQL narrows by folder, channel, dates, ... (cheap: ids only), and the
+      // text is matched against the decrypted search index, which only has to
+      // decrypt messages it hasn't seen yet. With no folder given, search
+      // spans every folder but Spam and deleted mail.
       const scope = query.folder
         ? where
         : `${where ? `${where} AND` : "WHERE"} folder <> 'spam' AND status <> 'deleted'`;
-      const dataRes = await this.pg.query(
-        `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives ${scope} ORDER BY received_at DESC`,
-        params,
-      );
-      // Free text matches who it's from and to as well as subject and body
-      // ("byteplus" finds mail from BytePlus <noreply@byteplus.com>).
-      const haystack = (r: any) =>
-        [
-          r.subject,
-          r.body,
-          r.sender_name,
-          r.sender_address,
-          typeof r.recipients === "string"
-            ? r.recipients
-            : JSON.stringify(r.recipients ?? ""),
-        ]
-          .map((v) => String(v ?? ""))
-          .join("\n")
-          .toLowerCase();
-      const recipientAddresses = (r: any): string[] => {
-        let value: unknown = r.recipients;
-        if (typeof value === "string") {
-          try {
-            value = JSON.parse(value);
-          } catch {
-            return [];
-          }
-        }
-        return Array.isArray(value)
-          ? value
-              .map((recipient: any) =>
-                String(recipient?.address ?? recipient ?? "").toLowerCase(),
-              )
-              .filter(Boolean)
-          : [];
-      };
-      const matches = (await openRows("missives", dataRes.rows)).filter(
-        (r) =>
-          (!text || haystack(r).includes(text)) &&
-          (!from ||
-            String(r.sender_address ?? "")
-              .toLowerCase()
-              .includes(from)) &&
-          (!to ||
-            recipientAddresses(r).some((address) => address.includes(to))),
+      const candidates = await this.searchIndex(scope, params);
+      const matches = candidates.filter(
+        (c) =>
+          (!text || c.entry.text.includes(text)) &&
+          (!from || c.entry.from.includes(from)) &&
+          (!to || c.entry.to.some((address) => address.includes(to))),
       );
       total = matches.length;
-      missives = matches.slice(offset, offset + limit).map(rowToMissive);
+      missives = await this.listByIds(
+        matches.slice(offset, offset + limit).map((c) => c.id),
+      );
     } else {
       const countRes = await this.pg.query(
         `SELECT COUNT(*) FROM missives ${where}`,
@@ -408,6 +404,78 @@ export class StorageService {
     }
 
     return { missives, threads, total };
+  }
+
+  /**
+   * This user's candidate messages (newest first) with their decrypted search
+   * text. Decrypting every message on every search took 12+ seconds for a
+   * 3,000-message mailbox, so decrypted text is kept per message and only
+   * re-read when the row's updated_at changes.
+   */
+  private async searchIndex(
+    scope: string,
+    params: any[],
+  ): Promise<{ id: string; entry: SearchEntry }[]> {
+    const { rows } = await this.pg.query(
+      `SELECT id, owner_id, updated_at FROM missives ${scope} ORDER BY received_at DESC`,
+      params,
+    );
+    const key = (r: any) => `${r.owner_id}:${r.id}`;
+    const stamp = (r: any) => new Date(r.updated_at).getTime();
+    const stale = rows.filter(
+      (r: any) => searchCache.get(key(r))?.updatedAt !== stamp(r),
+    );
+    for (let i = 0; i < stale.length; i += 500) {
+      const ids = stale.slice(i, i + 500).map((r: any) => r.id);
+      const res = await this.pg.query(
+        `SELECT id, owner_id, updated_at, subject, body, sender_name, sender_address, recipients
+         FROM missives WHERE id = ANY($1::text[])`,
+        [ids],
+      );
+      for (const r of await openRows("missives", res.rows)) {
+        if (searchCache.size >= SEARCH_CACHE_MAX) searchCache.clear();
+        searchCache.set(key(r), toSearchEntry(r, stamp(r)));
+      }
+    }
+    return rows
+      .map((r: any) => ({ id: r.id as string, entry: searchCache.get(key(r))! }))
+      .filter((c) => c.entry);
+  }
+
+  /** Full list rows for these ids, in the given order. */
+  private async listByIds(ids: string[]): Promise<Missive[]> {
+    if (ids.length === 0) return [];
+    const { rows } = await this.pg.query(
+      `SELECT ${MISSIVE_LIST_COLUMNS} FROM missives WHERE id = ANY($1::text[])`,
+      [ids],
+    );
+    const byId = new Map(
+      (await openRows("missives", rows)).map((r: any) => [r.id, rowToMissive(r)]),
+    );
+    return ids.map((id) => byId.get(id)).filter((m): m is Missive => !!m);
+  }
+
+  /**
+   * Messages that best match a question in plain words, for AI search: each
+   * message scores one point per term found (sender, recipients, subject or
+   * body), most matching terms first, newest first among equals.
+   */
+  async searchByTerms(terms: string[], limit = 15): Promise<Missive[]> {
+    const wanted = [...new Set(terms.map((t) => t.toLowerCase()).filter(Boolean))];
+    if (wanted.length === 0) return [];
+    const candidates = await this.searchIndex(
+      "WHERE folder <> 'spam' AND status <> 'deleted'",
+      [],
+    );
+    const scored = candidates
+      .map((c, order) => ({
+        id: c.id,
+        order,
+        score: wanted.reduce((n, t) => n + (c.entry.text.includes(t) ? 1 : 0), 0),
+      }))
+      .filter((c) => c.score > 0)
+      .sort((a, b) => b.score - a.score || a.order - b.order);
+    return this.listByIds(scored.slice(0, limit).map((c) => c.id));
   }
 
   // ── Folders ──

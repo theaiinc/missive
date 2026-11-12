@@ -9,6 +9,11 @@ import { safeError } from "./log-safe";
 const GMAIL_LOOKUP_MS = 10 * 60_000;
 /** At most this many Gmail matches are brought in per search. */
 const GMAIL_LOOKUP_LIMIT = 10;
+/**
+ * A search waits at most this long for Gmail; the lookup keeps going after,
+ * so what it brings in shows on the next search (or the next keystroke).
+ */
+const GMAIL_LOOKUP_WAIT_MS = 2_500;
 
 @Injectable()
 export class SearchService {
@@ -34,7 +39,10 @@ export class SearchService {
       if (!last || Date.now() - last > GMAIL_LOOKUP_MS) {
         this.lookedUp.set(key, Date.now());
         if (this.lookedUp.size > 1000) this.lookedUp.clear();
-        await this.sync.importGmailMatches(text, GMAIL_LOOKUP_LIMIT).catch((e) => this.log.warn(`Gmail lookup failed: ${safeError(e)}`));
+        const lookup = this.sync
+          .importGmailMatches(text, GMAIL_LOOKUP_LIMIT)
+          .catch((e) => this.log.warn(`Gmail lookup failed: ${safeError(e)}`));
+        await Promise.race([lookup, new Promise((r) => setTimeout(r, GMAIL_LOOKUP_WAIT_MS))]);
       }
     }
     return this.storage.search(query);
