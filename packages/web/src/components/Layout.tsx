@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   CalendarDays,
+  MessagesSquare,
   Menu,
   X,
   PanelLeftClose,
@@ -36,6 +37,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import type { Folder } from "@theaiinc/missive-core";
+import { useChatConversations } from "@/pages/Chat";
 import { useEffect, useRef, useState } from "react";
 import { ChatWidget } from "./ChatWidget";
 import { Toaster } from "sonner";
@@ -63,6 +65,7 @@ const folderIcons: Record<string, React.ElementType> = {
 };
 
 const navItems = [
+  { to: "/chat", label: "Chat", icon: MessagesSquare },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/rules", label: "Rules", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
@@ -129,6 +132,8 @@ function LayoutShell() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const activeFolder = searchParams.get("folder") ?? "inbox";
+  const { data: chats } = useChatConversations();
+  const chatUnread = chats?.reduce((n, c) => n + c.unread, 0) ?? 0;
 
   const { data: folders } = useQuery({
     queryKey: ["folders"],
@@ -461,6 +466,11 @@ function LayoutShell() {
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 {!collapsed && <span className="truncate">{item.label}</span>}
+                {!collapsed && item.to === "/chat" && chatUnread > 0 && (
+                  <span className="ml-auto text-[10px] font-semibold tabular-nums" aria-label={`${chatUnread} unread`}>
+                    {chatUnread}
+                  </span>
+                )}
               </NavLink>
             );
           })}

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ChatAppsSettings } from "@/components/ChatAppsSettings";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
@@ -1090,6 +1091,10 @@ export function Settings() {
             />
           </div>
         </section>
+
+        <Separator />
+
+        <ChatAppsSettings />
 
         <Separator />
 

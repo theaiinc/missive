@@ -32,7 +32,7 @@ export function NotificationPanel({
     (n: NotificationItem) => {
       if (!n.read) markRead(n.id);
       setOpen(false);
-      navigate(n.threadId ? `/thread/${n.threadId}` : "/inbox");
+      navigate(n.href);
     },
     [navigate, markRead]
   );

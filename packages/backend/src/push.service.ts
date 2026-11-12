@@ -11,7 +11,7 @@ import { safeError } from "./log-safe";
 /** Older mail (a first sync, a backlog) is filed quietly. */
 const FRESH_MS = 15 * 60_000;
 
-const PROVIDER_NAMES: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", gcal: "Google Calendar", imap: "Your mail server" };
+const PROVIDER_NAMES: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", gcal: "Google Calendar", imap: "Your mail server", telegram: "Telegram", discord: "Discord" };
 
 const endpointHash = (endpoint: string) => createHash("sha256").update(endpoint).digest("hex");
 
@@ -76,7 +76,15 @@ export class PushService {
     if (m.direction !== "inbound" || Date.now() - Date.parse(m.receivedAt) > FRESH_MS) return;
     // Where it is now: a rule (or a rule learned from your filing) may have moved it already.
     const { rows: now } = await this.pg.query(`SELECT folder, status FROM missives WHERE id = $1`, [m.id]);
-    if (now[0]?.folder !== "inbox" || now[0]?.status !== "unread") return;
+    if (now[0]?.status !== "unread") return;
+    if (m.channel === "chat" && now[0]?.folder === "chat") {
+      // Telegram, Discord, ...: who, in which chat, and what they said.
+      const app = PROVIDER_NAMES[m.provider] ?? m.provider;
+      const sender = m.from.name || m.from.address;
+      await this.send({ title: `${sender} · ${m.subject || app}`, body: m.body.slice(0, 200), url: `/chat/${m.threadId}`, tag: m.threadId });
+      return;
+    }
+    if (now[0]?.folder !== "inbox") return;
     await this.send({ title: m.from.name || m.from.address, body: m.subject || "(no subject)", url: `/thread/${m.threadId}`, tag: m.threadId });
   }
 

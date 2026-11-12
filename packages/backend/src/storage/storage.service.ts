@@ -190,6 +190,28 @@ export class StorageService {
     return missives;
   }
 
+  /**
+   * Chat conversations (Telegram, Discord, ...): the newest message of each,
+   * with how many are unread, newest conversation first.
+   */
+  async chatConversations(limit = 100): Promise<{ latest: Missive; unread: number }[]> {
+    const { rows: latest } = await this.pg.query(
+      `SELECT DISTINCT ON (thread_id) id, thread_id FROM missives
+        WHERE channel = 'chat' AND status <> 'deleted'
+        ORDER BY thread_id, received_at DESC`,
+    );
+    const { rows: counts } = await this.pg.query(
+      `SELECT thread_id, COUNT(*) FILTER (WHERE status = 'unread')::int AS unread FROM missives
+        WHERE channel = 'chat' GROUP BY thread_id`,
+    );
+    const unread = new Map(counts.map((r: any) => [r.thread_id as string, Number(r.unread)]));
+    const missives = await this.listByIds(latest.map((r: any) => r.id as string));
+    return missives
+      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+      .slice(0, limit)
+      .map((m) => ({ latest: m, unread: unread.get(m.threadId) ?? 0 }));
+  }
+
   // ── Attachments (migration 031) ──
 
   /**

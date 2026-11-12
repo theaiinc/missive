@@ -5,6 +5,8 @@ import { refreshPush } from "@/lib/push";
 export interface RecentMissive {
   id: string;
   threadId?: string;
+  channel?: string;
+  direction?: "inbound" | "outbound";
   subject?: string;
   from: { name?: string; address: string };
   body?: string;
@@ -16,6 +18,8 @@ export interface RecentMissive {
 export interface NotificationItem {
   id: string;
   threadId?: string;
+  /** Where opening it goes: the thread, or the Chat page for a chat message. */
+  href: string;
   sender: string;
   subject: string;
   accountEmail?: string;
@@ -93,7 +97,12 @@ export function useNotifications() {
       if (!res.ok) return;
 
       const data: { missives: RecentMissive[] } = await res.json();
-      if (!data.missives?.length) return;
+      // What you sent yourself (a reply from Missive) isn't news.
+      data.missives = (data.missives ?? []).filter((m) => m.direction !== "outbound");
+      if (!data.missives.length) {
+        setLastSeen(new Date().toISOString());
+        return;
+      }
 
       // Update last seen to the newest message
       const newest = data.missives.reduce((a, b) =>
@@ -105,6 +114,7 @@ export function useNotifications() {
       const items: NotificationItem[] = data.missives.map((msg) => ({
         id: msg.id,
         threadId: msg.threadId,
+        href: missiveHref(msg),
         sender: msg.from.name ?? msg.from.address,
         subject: msg.subject ?? "(no subject)",
         accountEmail: msg.accountEmail,
@@ -134,9 +144,7 @@ export function useNotifications() {
           action: {
             label: "View",
             onClick: () => {
-              window.location.href = msg.threadId
-                ? `/thread/${msg.threadId}`
-                : "/inbox";
+              window.location.href = missiveHref(msg);
             },
           },
           duration: 5000,
@@ -214,6 +222,12 @@ export function useNotifications() {
     dismissNotification,
     markRead,
   };
+}
+
+/** A chat message (Telegram, Discord) opens on the Chat page; anything else on its thread. */
+function missiveHref(m: RecentMissive): string {
+  if (!m.threadId) return "/inbox";
+  return m.channel === "chat" ? `/chat/${m.threadId}` : `/thread/${m.threadId}`;
 }
 
 function updateTitleBadge(count: number) {

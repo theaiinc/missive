@@ -23,6 +23,7 @@ export const ConnectorProvider = z.enum([
   "outlook",
   "slack",
   "discord",
+  "telegram",
   "facebook",
   "whatsapp",
   "crm",
