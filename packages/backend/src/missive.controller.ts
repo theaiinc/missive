@@ -7,12 +7,9 @@ import {
   Body,
   HttpException,
   NotFoundException,
-  Res,
 } from "@nestjs/common";
-import type { Response } from "express";
 import { MissiveService } from "./missive.service";
 import { SearchService } from "./search.service";
-import { SEARCH_TIMING } from "./storage/storage.service";
 import { OrganizerService } from "./organizer.service";
 import { StorageService } from "./storage/storage.service";
 import type { SearchQuery } from "@theaiinc/missive-core";
@@ -74,8 +71,7 @@ export class MissiveController {
     @Query("organization") organization?: string,
     @Query("project") project?: string,
     @Query("limit") limit?: string,
-    @Query("offset") offset?: string,
-    @Res({ passthrough: true }) res?: Response,
+    @Query("offset") offset?: string
   ) {
     const searchQuery: SearchQuery = {
       query: query ?? "",
@@ -92,16 +88,7 @@ export class MissiveController {
       limit: limit ? parseInt(limit, 10) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     };
-    const result = await this.searchService.search(searchQuery);
-    const timing = (result as any)[SEARCH_TIMING] as Record<string, number> | undefined;
-    if (timing && res) {
-      res.setHeader(
-        "Server-Timing",
-        Object.entries(timing).map(([k, v]) => `${k};dur=${v}`).join(", "),
-      );
-    }
-    // Also in the body: Cloudflare doesn't pass the header through.
-    return timing ? { ...result, timing } : result;
+    return this.searchService.search(searchQuery);
   }
 
   @Get("organizer-status")
