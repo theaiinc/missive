@@ -42,9 +42,6 @@ export const MISSIVE_LIST_COLUMNS = `id, thread_id, channel, direction, provider
   status, classification, entity_ids, received_at, created_at, updated_at, account_email,
   folder, rules_evaluated_at, organizations, projects, owner_id`;
 
-/** Key of the per-step timings a search result carries (not sent as JSON). */
-export const SEARCH_TIMING = Symbol("searchTiming");
-
 /** Decrypted, lowercased text of one message, for search. */
 type SearchEntry = { updatedAt: number; text: string; from: string; to: string[] };
 /** Shared by every user; keys are owner_id:message id. */
@@ -319,9 +316,6 @@ export class StorageService {
   // ── Search ──
 
   async search(query: SearchQuery): Promise<SearchResult> {
-    /** Milliseconds per step, sent back as a Server-Timing header. */
-    const timing: Record<string, number> = {};
-    const started = Date.now();
     const conditions: string[] = [];
     const params: any[] = [];
     let idx = 1;
@@ -390,7 +384,7 @@ export class StorageService {
       const scope = query.folder
         ? where
         : `${where ? `${where} AND` : "WHERE"} folder <> 'spam' AND status <> 'deleted'`;
-      const candidates = await this.searchIndex(scope, params, timing);
+      const candidates = await this.searchIndex(scope, params);
       const matches = candidates.filter(
         (c) =>
           (!text || c.entry.text.includes(text)) &&
@@ -398,11 +392,9 @@ export class StorageService {
           (!to || c.entry.to.some((address) => address.includes(to))),
       );
       total = matches.length;
-      const t = Date.now();
       missives = await this.listByIds(
         matches.slice(offset, offset + limit).map((c) => c.id),
       );
-      timing.rows = Date.now() - t;
     } else {
       const countRes = await this.pg.query(
         `SELECT COUNT(*) FROM missives ${where}`,
@@ -417,7 +409,6 @@ export class StorageService {
     }
 
     // Resolve threads
-    const threadsStarted = Date.now();
     // One query for the page's threads: one each took ~50 ms apiece, 2-3 s a page.
     const threadIds = [...new Set(missives.map((m) => m.threadId))] as string[];
     const threads = await this.getThreads(threadIds);
@@ -434,9 +425,7 @@ export class StorageService {
   private async searchIndex(
     scope: string,
     params: any[],
-    timing: Record<string, number> = {},
   ): Promise<{ id: string; entry: SearchEntry }[]> {
-    let t = Date.now();
     const { rows } = await this.pg.query(
       `SELECT id, owner_id, updated_at FROM missives ${scope} ORDER BY received_at DESC`,
       params,
@@ -446,9 +435,6 @@ export class StorageService {
     const stale = rows.filter(
       (r: any) => searchCache.get(key(r))?.updatedAt !== stamp(r),
     );
-    timing.ids = Date.now() - t;
-    timing.decrypted = stale.length;
-    t = Date.now();
     for (let i = 0; i < stale.length; i += 500) {
       const ids = stale.slice(i, i + 500).map((r: any) => r.id);
       const res = await this.pg.query(
@@ -461,7 +447,6 @@ export class StorageService {
         searchCache.set(key(r), toSearchEntry(r, stamp(r)));
       }
     }
-    timing.index = Date.now() - t;
     return rows
       .map((r: any) => ({ id: r.id as string, entry: searchCache.get(key(r))! }))
       .filter((c) => c.entry);
