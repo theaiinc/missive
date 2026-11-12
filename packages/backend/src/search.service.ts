@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { SearchQuery, SearchResult } from "@theaiinc/missive-core";
-import { StorageService } from "./storage/storage.service";
+import { StorageService, SEARCH_TIMING } from "./storage/storage.service";
 import { SyncService } from "./sync.service";
 import { currentUser } from "./request-context";
 import { safeError } from "./log-safe";
@@ -33,6 +33,7 @@ export class SearchService {
   async search(query: SearchQuery): Promise<SearchResult> {
     const text = query.query?.trim();
     const user = currentUser();
+    let gmailMs = 0;
     if (text && text.length >= 3 && !query.offset && user && query.folder !== "spam") {
       const key = `${user.id}\n${text.toLowerCase()}`;
       const last = this.lookedUp.get(key);
@@ -42,9 +43,14 @@ export class SearchService {
         const lookup = this.sync
           .importGmailMatches(text, GMAIL_LOOKUP_LIMIT)
           .catch((e) => this.log.warn(`Gmail lookup failed: ${safeError(e)}`));
+        const t = Date.now();
         await Promise.race([lookup, new Promise((r) => setTimeout(r, GMAIL_LOOKUP_WAIT_MS))]);
+        gmailMs = Date.now() - t;
       }
     }
-    return this.storage.search(query);
+    const result = await this.storage.search(query);
+    const timing = (result as any)[SEARCH_TIMING] as Record<string, number> | undefined;
+    if (timing) timing.gmail = gmailMs;
+    return result;
   }
 }
