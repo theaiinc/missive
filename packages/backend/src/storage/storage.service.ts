@@ -279,6 +279,19 @@ export class StorageService {
     return rowToThread(await openRow("threads", rows[0]));
   }
 
+  /** These threads, in the order asked for (missing ones left out). */
+  async getThreads(ids: string[]): Promise<Thread[]> {
+    if (ids.length === 0) return [];
+    const { rows } = await this.pg.query(
+      `SELECT * FROM threads WHERE id = ANY($1::text[])`,
+      [ids],
+    );
+    const byId = new Map(
+      (await openRows("threads", rows)).map((r: any) => [r.id, rowToThread(r)]),
+    );
+    return ids.map((id) => byId.get(id)).filter((t): t is Thread => !!t);
+  }
+
   async saveThread(thread: Thread): Promise<void> {
     await this.pg.query(
       `INSERT INTO threads (
@@ -405,12 +418,9 @@ export class StorageService {
 
     // Resolve threads
     const threadsStarted = Date.now();
+    // One query for the page's threads: one each took ~50 ms apiece, 2-3 s a page.
     const threadIds = [...new Set(missives.map((m) => m.threadId))] as string[];
-    const threads: Thread[] = [];
-    for (const tid of threadIds) {
-      const t = await this.getThread(tid);
-      if (t) threads.push(t);
-    }
+    const threads = await this.getThreads(threadIds);
 
     return { missives, threads, total };
   }
