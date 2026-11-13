@@ -57,6 +57,8 @@ export type ChatAccount = {
   running: boolean;
   needsReauth: boolean;
   lastError: string | null;
+  /** What to show for the account behind a conversation ("via …"): the OA's name for Zalo. */
+  displayHandle?: string;
   /** WeCom and Zalo: the webhook URL (and WeCom's callback Token and EncodingAESKey) to enter in the app. */
   setup?: HookSetup;
 };
@@ -239,6 +241,10 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     await this.storage.saveMissive(missive);
     if (!thread.missiveIds.includes(id)) thread.missiveIds.push(id);
     thread.messageCount = thread.missiveIds.length;
+    // A conversation first filed under a bare id takes the person's name once it's known.
+    if (!message.fromBot && message.chatTitle && /^\d+$/.test(thread.subject ?? "") && message.chatTitle !== thread.subject) {
+      thread.subject = message.chatTitle;
+    }
     if (message.at > thread.lastActivityAt) thread.lastActivityAt = message.at;
     await this.storage.saveThread(thread);
 
@@ -262,6 +268,7 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
       needsReauth: c.status === "needs_reauth",
       lastError: c.lastError ?? null,
       ...(isHookProvider(c.provider) ? { setup: this.setup(c.provider, c.tokens as WecomCredentials | ZaloCredentials) } : {}),
+      ...(c.provider === "zalo" ? { displayHandle: (c.tokens as ZaloCredentials).oaName || c.label } : {}),
     }));
   }
 
@@ -339,6 +346,7 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
         // The same app keeps its webhook URL and OA Secret Key when it's connected again.
         oaSecretKey: old?.appId === pending.appId ? old.oaSecretKey : "",
         oaId: oa.oaId,
+        oaName: oa.name,
         refreshToken: tokens.refreshToken,
         accessToken: tokens.accessToken,
         accessTokenUntil: tokens.accessTokenUntil,
@@ -505,11 +513,25 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
       const token = await this.zaloAccessToken(connector.id);
       return token ? new ZaloApi(c.appId, c.appSecret).userName(token, userId) : undefined;
     });
-    if (name) {
-      message.chatTitle = name;
-      if (!message.fromBot) message.senderName = name;
-    }
+    // Zalo shares names only with some apps (and servers in Vietnam); otherwise
+    // a short label beats a 19-digit id.
+    const shown = name ?? `Zalo user ···${userId.slice(-4)}`;
+    message.chatTitle = shown;
+    if (!message.fromBot) message.senderName = shown;
     await this.file(connector, "zalo", message);
+    if (!c.oaName) await this.learnOaName(connector.id);
+  }
+
+  /** Connections made before the OA's name was kept get it on their next message. */
+  private async learnOaName(connectorId: string): Promise<void> {
+    const connector = await this.store.get(connectorId);
+    const c = connector?.tokens as ZaloCredentials | undefined;
+    if (!connector || !c || c.oaName) return;
+    const token = await this.zaloAccessToken(connectorId);
+    if (!token) return;
+    const oa = await new ZaloApi(c.appId, c.appSecret).oaInfo(token);
+    const fresh = await this.store.get(connectorId);
+    if (fresh) await this.saveTokens(fresh, { ...(fresh.tokens as ZaloCredentials), oaName: oa.name });
   }
 
   /** Work started by a webhook after it was answered (tests wait on it). */
@@ -583,7 +605,8 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
           provider: latest.provider as ChatProvider,
           title: threads.get(latest.threadId)?.subject || latest.subject || "Conversation",
           label: account?.label ?? null,
-          handle: latest.accountEmail ?? null,
+          // Zalo and WeCom handles are numeric ids; show what the connection is called instead.
+          handle: account?.displayHandle ?? latest.accountEmail ?? null,
           unread,
           lastMessage: {
             sender: latest.from.name ?? latest.from.address,

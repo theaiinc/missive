@@ -37,6 +37,8 @@ export type ZaloCredentials = {
    */
   oaSecretKey: string;
   oaId: string;
+  /** The OA's name, shown on its conversations ("via Neko Coffee"). */
+  oaName?: string;
   refreshToken: string;
   accessToken?: string;
   accessTokenUntil?: number;
@@ -210,7 +212,7 @@ export async function zaloConnect(
     const tokens = await api.refresh(refreshToken);
     const oa = await api.oaInfo(tokens.accessToken!);
     return {
-      credentials: { appId, appSecret, oaSecretKey, oaId: oa.oaId, ...tokens, hookKey: newHookKey() },
+      credentials: { appId, appSecret, oaSecretKey, oaId: oa.oaId, oaName: oa.name, ...tokens, hookKey: newHookKey() },
       handle: oa.oaId,
       name: oa.name,
     };
