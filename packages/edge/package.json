@@ -7,7 +7,8 @@
   "scripts": {
     "types": "wrangler types",
     "typecheck": "wrangler types && tsc --noEmit",
-    "deploy": "pnpm --filter @theaiinc/missive-web exec vite build && wrangler deploy",
+    "deploy": "pnpm --filter @theaiinc/missive-web exec vite build && wrangler deploy --containers-rollout=immediate --var MISSIVE_BUILD:$(node scripts/stamp-build.mjs)",
+    "test": "vitest run",
     "deploy:relay": "wrangler deploy --config relay/wrangler.jsonc --profile octopus"
   },
   "dependencies": {
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
     "wrangler": "4.131.2"
   }
 }
