@@ -38,6 +38,34 @@ async function bootstrap() {
   const port = process.env.PORT ?? 4000;
   await app.listen(port);
   console.log(`Missive API running on http://localhost:${port}`);
+  exitOnSignals(() => app.close());
 }
 
-bootstrap();
+/**
+ * Exits on SIGTERM/SIGINT, after closing the app for at most 5 seconds. In
+ * the container `node` is PID 1, which the kernel never kills for a signal it
+ * has no handler for, so without this the edge Worker's restart for a new
+ * deploy (packages/edge/src/rollout.ts) and Cloudflare's rollout were ignored
+ * and the old build kept serving until the platform gave up waiting.
+ */
+export function exitOnSignals(close: () => Promise<unknown>, exit: (code: number) => void = (code) => process.exit(code), graceMs = 5_000): void {
+  let closing = false;
+  const stop = (signal: NodeJS.Signals) => {
+    if (closing) return;
+    closing = true;
+    console.log(`${signal}: shutting down`);
+    const timer = setTimeout(() => exit(0), graceMs);
+    timer.unref?.();
+    close().then(
+      () => exit(0),
+      (error: unknown) => {
+        console.error("Shutdown failed", error);
+        exit(0);
+      }
+    );
+  };
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+}
+
+if (require.main === module) bootstrap();
