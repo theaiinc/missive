@@ -12,3 +12,4 @@ coverage/
 # Local AI-tool skill files (not part of the app)
 .agents/
 skills-lock.json
+.missive-build

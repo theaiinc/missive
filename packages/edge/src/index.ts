@@ -3,6 +3,7 @@ import { Container } from "@cloudflare/containers";
 import { DataCipher } from "../../core/src/crypto";
 import { AI_MODEL, WRITING_MODEL, aiUsage, chatCompletions, type AiEnv } from "./ai";
 import { imageProxy } from "./image-proxy";
+import { STUCK_AFTER_MS, rolloutStep, type RolloutState } from "./rollout";
 
 export { AiBudget } from "./ai";
 
@@ -11,7 +12,12 @@ const INSTANCE = "api";
 const API_PORT = 4000;
 
 export interface Env extends AiEnv {
-  CF_VERSION_METADATA: WorkerVersionMetadata;
+  /**
+   * The build this Worker was deployed with, the same id baked into the API
+   * image (scripts/stamp-build.mjs). Unset (a deploy without the script) turns
+   * off the restart-until-current check in the cron.
+   */
+  MISSIVE_BUILD?: string;
   API: DurableObjectNamespace<MissiveApi>;
   ASSETS: Fetcher;
   EMAIL: SendEmail;
@@ -97,21 +103,27 @@ export class MissiveApi extends Container<Env> {
   sleepAfter = "30m";
 
   /**
-   * Which deploy started the running container. A deploy updates this
-   * Worker at once, but the container keeps its old image until it stops,
-   * and the cron below keeps it awake, so without this a deploy's API changes
-   * never went live (a database fix shipped but the old queries kept running).
+   * Called by the cron with the build the API just reported. A deploy updates
+   * this Worker at once, but the container keeps its old image until it stops
+   * (and the cron keeps it awake), and a restart soon after a deploy can come
+   * back up on the previous image. So it's restarted, with backoff, until it
+   * reports this deploy's build (rollout.ts). True when it was stopped.
    */
-  override async onStart(): Promise<void> {
-    await this.ctx.storage.put("startedByVersion", (this.env as Env).CF_VERSION_METADATA.id);
-  }
-
-  /** Stops a container started by an older deploy; the next request starts the new image. */
-  async restartIfStale(currentVersion: string): Promise<boolean> {
-    const startedBy = await this.ctx.storage.get<string>("startedByVersion");
-    if (startedBy === currentVersion) return false;
-    if ((await this.getState()).status !== "healthy" && startedBy !== undefined) return false;
-    await this.ctx.storage.put("startedByVersion", currentVersion);
+  async ensureBuild(expected: string, reported: string | null): Promise<boolean> {
+    const step = rolloutStep(await this.ctx.storage.get<RolloutState>("rollout"), expected, reported, Date.now());
+    if (step.state) await this.ctx.storage.put("rollout", step.state);
+    else await this.ctx.storage.delete("rollout");
+    if (step.stuck && step.state) {
+      console.error("API container still on an old build", {
+        expected,
+        reported,
+        restarts: step.state.restarts,
+        minutes: Math.round((Date.now() - step.state.since) / 60_000),
+        stuckAfterMinutes: STUCK_AFTER_MS / 60_000,
+      });
+    }
+    if (!step.restart) return false;
+    console.log("Restarting the API container for the new build", { expected, reported, restart: step.state?.restarts });
     await this.stop();
     return true;
   }
@@ -251,6 +263,18 @@ async function apiResponse(path: string, result: Response | unknown): Promise<Re
   return json({ error: `Missive's server had a problem (${result.status}${text ? `: ${text}` : ""}). Try again in a moment.` }, result.status);
 }
 
+/**
+ * Wakes the API (or keeps it awake) and returns the build it reports: null
+ * from an API too old to say, undefined when it didn't answer.
+ */
+async function runningBuild(env: Env): Promise<string | null | undefined> {
+  const response = await api(env).fetch(new Request(`${env.APP_URL}/api/v1/health`)).catch(() => null);
+  if (!response?.ok) return undefined;
+  const body = (await response.json().catch(() => null)) as { build?: unknown } | null;
+  if (!body) return undefined;
+  return typeof body.build === "string" && body.build ? body.build : null;
+}
+
 export default {
   /**
    * Every minute (wrangler.jsonc triggers): keeps the API container awake, so
@@ -258,8 +282,10 @@ export default {
    * until someone opens the app, and new Gmail mail shows up late.
    */
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await api(env).restartIfStale(env.CF_VERSION_METADATA.id);
-    await api(env).fetch(new Request(`${env.APP_URL}/api/v1/health`));
+    const reported = await runningBuild(env);
+    if (!env.MISSIVE_BUILD || reported === undefined) return;
+    // Stopped for being an older build: start the new one now rather than at the next request.
+    if (await api(env).ensureBuild(env.MISSIVE_BUILD, reported)) await runningBuild(env);
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {

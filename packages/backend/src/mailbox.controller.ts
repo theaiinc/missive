@@ -9,6 +9,7 @@ import { UsersService } from "./users.service";
 import { GroupsService } from "./groups.service";
 import { requireUser, runAsUser } from "./request-context";
 import { localPartProblem, normalizeLocalPart } from "./mailbox-claim";
+import { BUILD_ID } from "./build-id";
 
 const validEmail = (s: unknown): s is string => typeof s === "string" && /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(s);
 const list = (value: unknown): string[] =>
@@ -32,7 +33,8 @@ export class MailboxController {
 
   @Get("health")
   health() {
-    return { ok: true };
+    // build: which deploy this is (build-id.ts); the edge Worker restarts the container until it's the latest.
+    return { ok: true, build: BUILD_ID };
   }
 
   /**
