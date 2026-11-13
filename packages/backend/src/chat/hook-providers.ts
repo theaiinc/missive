@@ -31,7 +31,10 @@ export type WecomCredentials = {
 export type ZaloCredentials = {
   appId: string;
   appSecret: string;
-  /** The OA's secret key (Webhook settings), which signs each webhook call. */
+  /**
+   * The OA's secret key (Webhook settings), which signs each webhook call.
+   * Empty until it's added: Zalo only shows it once the webhook URL is saved.
+   */
   oaSecretKey: string;
   oaId: string;
   refreshToken: string;
@@ -45,6 +48,8 @@ export type HookCredentials = WecomCredentials | ZaloCredentials;
 /** What Settings shows after connecting: where to point the app, and what to paste there. */
 export type HookSetup = {
   webhookUrl: string;
+  /** Zalo only: the OA Secret Key hasn't been added yet, so webhook calls are answered but not filed. */
+  needsSecret?: boolean;
   /** WeCom only: the callback Token and EncodingAESKey to enter in WeCom. */
   token?: string;
   aesKey?: string;
