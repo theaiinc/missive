@@ -488,19 +488,36 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     // answer, but file nothing until the key is added.
     if (call.method !== "POST" || !(connector.tokens as ZaloCredentials).oaSecretKey) return { status: 200, body: "ok" };
     const message = zaloEvent(connector.tokens as ZaloCredentials, call.body, call.signature);
+    // Zalo wants an answer within 2 seconds: the call is genuine, so answer now
+    // and look up the sender's name and file the message after.
     if (message) {
-      const userId = message.chatId;
-      const name = await this.lookupName(connector, userId, async () => {
-        const token = await this.zaloAccessToken(connector.id);
-        return token ? new ZaloApi((connector.tokens as ZaloCredentials).appId, (connector.tokens as ZaloCredentials).appSecret).userName(token, userId) : undefined;
-      });
-      if (name) {
-        message.chatTitle = name;
-        if (!message.fromBot) message.senderName = name;
-      }
-      await this.file(connector, "zalo", message);
+      const job = this.fileZalo(connector, message).catch((e) => this.log.warn(`Zalo message: ${safeError(e)}`));
+      this.background.add(job);
+      void job.finally(() => this.background.delete(job));
     }
     return { status: 200, body: "ok" };
+  }
+
+  private async fileZalo(connector: StoredConnector, message: ChatMessage): Promise<void> {
+    const userId = message.chatId;
+    const c = connector.tokens as ZaloCredentials;
+    const name = await this.lookupName(connector, userId, async () => {
+      const token = await this.zaloAccessToken(connector.id);
+      return token ? new ZaloApi(c.appId, c.appSecret).userName(token, userId) : undefined;
+    });
+    if (name) {
+      message.chatTitle = name;
+      if (!message.fromBot) message.senderName = name;
+    }
+    await this.file(connector, "zalo", message);
+  }
+
+  /** Work started by a webhook after it was answered (tests wait on it). */
+  readonly background = new Set<Promise<unknown>>();
+
+  /** Resolves once every webhook's after-work has finished. */
+  async settled(): Promise<void> {
+    while (this.background.size) await Promise.all([...this.background]);
   }
 
   private async lookupName(connector: StoredConnector, id: string, find: () => Promise<string | undefined>): Promise<string | undefined> {

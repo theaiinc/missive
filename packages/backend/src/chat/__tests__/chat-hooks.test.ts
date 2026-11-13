@@ -187,6 +187,7 @@ describe("Zalo webhook", () => {
     const { service, missives } = setup();
     const { raw, signature } = zaloBody(userText);
     expect(await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: raw, signature })).toEqual({ status: 200, body: "ok" });
+    await service.settled();
     expect([...missives.values()][0]).toMatchObject({ provider: "zalo", body: "Xin chào", from: { name: "Nguyễn An", address: "zalo:u77" }, direction: "inbound" });
   });
 
@@ -210,6 +211,7 @@ describe("Zalo webhook", () => {
     (connectors.get("zalo:x")!.tokens as ZaloCredentials).accessTokenUntil = 0;
     const { raw, signature } = zaloBody(userText);
     await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: raw, signature });
+    await service.settled();
     const out = await runAsUser(owner as never, () => service.send([...missives.values()][0].threadId, "Cảm ơn bạn"));
     expect(out).toMatchObject({ direction: "outbound", body: "Cảm ơn bạn" });
     expect(calls.filter((u) => u.includes("access_token"))).toHaveLength(1);
@@ -264,6 +266,25 @@ describe("Zalo connect through the OA admin's Allow", () => {
     const raw = JSON.stringify(event);
     const signature = "mac=" + sha(`4321${raw}1700000000000oa-secret`);
     expect((await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: raw, signature })).status).toBe(200);
+    await service.settled();
     expect(missives.size).toBe(1);
+  });
+});
+
+describe("Zalo's 2-second limit", () => {
+  it("answers before the name lookup finishes", async () => {
+    let release!: () => void;
+    fetchMock.mockImplementation(() => new Promise((r) => (release = () => r(reply({ error: 0, data: { display_name: "Slow" } }) as never))).then((x) => x));
+    const { service, missives } = setup();
+    const event = { app_id: "4321", event_name: "user_send_text", timestamp: "1700000000000", sender: { id: "u5" }, recipient: { id: "999" }, message: { msg_id: "s1", text: "quick" } };
+    const raw = JSON.stringify(event);
+    const signature = "mac=" + sha(`4321${raw}1700000000000oa-secret`);
+    expect(await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: raw, signature })).toEqual({ status: 200, body: "ok" });
+    expect(missives.size).toBe(0);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(missives.size).toBe(0);
+    release();
+    await service.settled();
+    expect([...missives.values()][0]).toMatchObject({ body: "quick", from: { name: "Slow" } });
   });
 });
