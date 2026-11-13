@@ -54,7 +54,9 @@ function setup() {
     missiveExists: async (id: string) => missives.has(id),
     saveMissive: async (m: any) => void missives.set(m.id, m),
     getThread: async (id: string) => threads.get(id) ?? null,
-    saveThread: async (t: any) => void threads.set(t.id, { ...t, missiveIds: [...t.missiveIds] }),
+    // Like Postgres: saving keeps the first subject; renameThread changes it.
+    saveThread: async (t: any) => void threads.set(t.id, { ...t, subject: threads.get(t.id)?.subject ?? t.subject, missiveIds: [...t.missiveIds] }),
+    renameThread: async (id: string, subject: string) => void threads.set(id, { ...threads.get(id), subject }),
     getThreadMissives: async (id: string) => [...missives.values()].filter((m) => m.threadId === id).sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1)),
   };
   const users = { byId: async (id: string) => (id === owner.id ? owner : null), all: async () => [owner] };
@@ -304,5 +306,24 @@ describe("readable Zalo names", () => {
     expect((connectors.get("zalo:x")!.tokens as ZaloCredentials).oaName).toBe("Neko Coffee");
     const accounts = await runAsUser(owner as never, () => service.accounts());
     expect(accounts.find((a) => a.provider === "zalo")!.displayHandle).toBe("Neko Coffee");
+  });
+});
+
+describe("a conversation first filed under a bare id", () => {
+  it("takes the sender's label once a message brings one", async () => {
+    const { service, threads, connectors } = setup();
+    (connectors.get("zalo:x")!.tokens as ZaloCredentials).oaName = "Acme OA";
+    fetchMock.mockImplementation(() => reply({ error: 0, data: { display_name: "5387598391981684897" } }));
+    const send = async (msgId: string) => {
+      const event = { app_id: "4321", event_name: "user_send_text", timestamp: "1700000000000", sender: { id: "5387598391981684897" }, recipient: { id: "999" }, message: { msg_id: msgId, text: "hi" } };
+      const raw = JSON.stringify(event);
+      await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: raw, signature: "mac=" + sha(`4321${raw}1700000000000oa-secret`) });
+      await service.settled();
+    };
+    await send("a1");
+    const [id] = [...threads.keys()];
+    threads.set(id!, { ...threads.get(id!), subject: "5387598391981684897" }); // filed by older code
+    await send("a2");
+    expect(threads.get(id!).subject).toBe("Zalo user ···4897");
   });
 });

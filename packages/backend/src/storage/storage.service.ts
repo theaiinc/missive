@@ -298,6 +298,14 @@ export class StorageService {
     return rowToThread(await openRow("threads", rows[0]));
   }
 
+  /** Gives a thread a new subject (saveThread keeps the first one, which email relies on). */
+  async renameThread(id: string, subject: string): Promise<void> {
+    await this.pg.query(`UPDATE threads SET subject = $2, updated_at = NOW() WHERE id = $1`, [
+      id,
+      await seal("threads", "subject", subject),
+    ]);
+  }
+
   /** These threads, in the order asked for (missing ones left out). */
   async getThreads(ids: string[]): Promise<Thread[]> {
     if (ids.length === 0) return [];
