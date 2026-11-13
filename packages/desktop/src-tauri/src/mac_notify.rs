@@ -40,20 +40,25 @@ pub fn request(done: impl Fn(&'static str) + 'static) {
         .requestAuthorizationWithOptions_completionHandler(options, &block);
 }
 
-pub fn post(title: &str, body: &str) {
+/// `key` (the page's tag: one per conversation) makes a newer notification
+/// replace the last one and groups them; `url` is where a click goes. Both
+/// ride in the identifier, so a click works after a relaunch too.
+pub fn post(title: &str, body: &str, key: Option<&str>, url: Option<&str>) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
     content.setSound(Some(&UNNotificationSound::defaultSound()));
-    let id = NSString::from_str(&format!("missive-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
+    let key = key.filter(|k| !k.is_empty()).map(str::to_string).unwrap_or_else(|| format!("n-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
+    content.setThreadIdentifier(&NSString::from_str(&key));
+    let id = NSString::from_str(&format!("missive|{}|{}", key.replace('|', "_"), url.unwrap_or("/inbox")));
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
     UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, None);
 }
 
 define_class!(
     // Shows notifications while Missive is the active app too (macOS hides
-    // them by default then), and brings the window back when one is clicked.
+    // them by default then), and opens what one was about when it's clicked.
     #[unsafe(super(NSObject))]
     #[name = "MissiveNotificationDelegate"]
     #[ivars = AppHandle]
@@ -78,20 +83,37 @@ define_class!(
         fn did_receive(
             &self,
             _center: &UNUserNotificationCenter,
-            _response: &UNNotificationResponse,
+            response: &UNNotificationResponse,
             handler: &block2::DynBlock<dyn Fn()>,
         ) {
+            let id = response.notification().request().identifier().to_string();
             let handle = self.ivars().clone();
             let _ = self.ivars().run_on_main_thread(move || {
-                if let Some(window) = handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                match parse_identifier(&id) {
+                    Some((key, url)) => crate::open_from_notification(&handle, &key, &url),
+                    None => {
+                        if let Some(window) = handle.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
                 }
             });
             handler.call(());
         }
     }
 );
+
+/// "missive|key|/chat/t_abc" → (key, path); older ones ("missive-3") carry no path.
+fn parse_identifier(id: &str) -> Option<(String, String)> {
+    let mut parts = id.splitn(3, '|');
+    if parts.next()? != "missive" {
+        return None;
+    }
+    let key = parts.next()?.to_string();
+    let url = parts.next()?.to_string();
+    Some((key, url))
+}
 
 /// Installs the delegate; the notification center holds it weakly, so it lives as long as the app.
 pub fn install_delegate(handle: AppHandle) {

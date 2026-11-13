@@ -12,6 +12,27 @@
     .then((state) => { permission = state; })
     .catch(() => {});
 
+  // Shown notifications by key, so a click (main.rs) reaches the page's onclick.
+  const shown = new Map();
+  let next = 0;
+
+  // A notification clicked in macOS: its own onclick if this page made it,
+  // else the app routes there ("missive:open", useNotifications.ts), else a
+  // plain navigation.
+  window.__missiveNotificationClicked = (key, url) => {
+    const note = shown.get(key);
+    shown.delete(key);
+    if (note && (note.onclick || note.listens)) {
+      const click = new Event("click", { cancelable: true });
+      if (typeof note.onclick === "function") note.onclick(click);
+      note.dispatchEvent(click);
+      return;
+    }
+    const open = new CustomEvent("missive:open", { detail: url, cancelable: true });
+    window.dispatchEvent(open);
+    if (!open.defaultPrevented) location.assign(url);
+  };
+
   class MissiveNotification extends EventTarget {
     static get permission() { return permission; }
     static async requestPermission(callback) {
@@ -27,10 +48,21 @@
       super();
       this.title = String(title);
       this.body = options.body ?? "";
+      this.tag = options.tag ?? "";
+      this.data = options.data ?? null;
       this.onclick = this.onclose = this.onerror = this.onshow = null;
+      const path = typeof this.data?.url === "string" && this.data.url.startsWith("/") && !this.data.url.startsWith("//") ? this.data.url : "/inbox";
+      // One per tag (a conversation): a newer one replaces it, in macOS too.
+      const key = (this.tag || `n${next++}`).replace(/\|/g, "_");
+      shown.set(key, this);
+      if (shown.size > 100) shown.delete(shown.keys().next().value);
       if (permission === "granted") {
-        invoke("notify", { title: this.title, body: this.body }).catch(() => {});
+        invoke("notify", { title: this.title, body: this.body, key, url: path }).catch(() => {});
       }
+    }
+    addEventListener(type, ...rest) {
+      if (type === "click") this.listens = true;
+      super.addEventListener(type, ...rest);
     }
     close() {}
   }

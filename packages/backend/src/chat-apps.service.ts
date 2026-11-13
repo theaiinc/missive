@@ -272,6 +272,13 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     }));
   }
 
+  /** What a connection is called (a Zalo OA's name, a bot's label), for notifications. */
+  async connectionName(provider: string, handle?: string): Promise<string | null> {
+    if (!isChatProvider(provider) || !handle) return null;
+    const account = (await this.accounts()).find((a) => a.provider === provider && a.handle === handle);
+    return account ? account.displayHandle || account.label || null : null;
+  }
+
   private setup(provider: HookProvider, c: WecomCredentials | ZaloCredentials): HookSetup {
     const url = webhookUrl(process.env.APP_URL ?? "", provider, c.hookKey);
     if (provider === "wecom") {

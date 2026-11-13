@@ -7,11 +7,12 @@ import { PostgresService } from "./storage/postgres.service";
 import { openRows, seal } from "./storage/content-crypto";
 import { currentUser, runAsUser } from "./request-context";
 import { safeError } from "./log-safe";
+import { ChatAppsService } from "./chat-apps.service";
+import { chatNotification, mailNotification, PROVIDER_NAMES, type NotificationText } from "./notification-text";
 
 /** Older mail (a first sync, a backlog) is filed quietly. */
 const FRESH_MS = 15 * 60_000;
 
-const PROVIDER_NAMES: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", gcal: "Google Calendar", imap: "Your mail server", telegram: "Telegram", discord: "Discord" };
 
 const endpointHash = (endpoint: string) => createHash("sha256").update(endpoint).digest("hex");
 
@@ -28,7 +29,10 @@ export class PushService {
   readonly publicKey = process.env.VAPID_PUBLIC_KEY ?? "";
   private readonly enabled: boolean;
 
-  constructor(private readonly pg: PostgresService) {
+  constructor(
+    private readonly pg: PostgresService,
+    private readonly chatApps: ChatAppsService,
+  ) {
     this.enabled = !!(this.publicKey && process.env.VAPID_PRIVATE_KEY);
     if (this.enabled) {
       // The subject is how push services reach the sender: the app, not a person's address.
@@ -77,19 +81,30 @@ export class PushService {
     // Where it is now: a rule (or a rule learned from your filing) may have moved it already.
     const { rows: now } = await this.pg.query(`SELECT folder, status FROM missives WHERE id = $1`, [m.id]);
     if (now[0]?.status !== "unread") return;
-    if (m.channel === "chat" && now[0]?.folder === "chat") {
-      // Telegram, Discord, ...: who, in which chat, and what they said.
-      const app = PROVIDER_NAMES[m.provider] ?? m.provider;
-      const sender = m.from.name || m.from.address;
-      await this.send({ title: `${sender} · ${m.subject || app}`, body: m.body.slice(0, 200), url: `/chat/${m.threadId}`, tag: m.threadId });
-      return;
-    }
-    if (now[0]?.folder !== "inbox") return;
-    await this.send({ title: m.from.name || m.from.address, body: m.subject || "(no subject)", url: `/thread/${m.threadId}`, tag: m.threadId });
+    const isChat = m.channel === "chat" && now[0]?.folder === "chat";
+    if (!isChat && now[0]?.folder !== "inbox") return;
+    await this.send(await this.describe(m));
+  }
+
+  /**
+   * What a notification about `m` says (push here, and the page's own
+   * notifications through recent-missives): for a chat, the app and
+   * conversation, who wrote and what, with how many are waiting in it.
+   */
+  async describe(m: Missive): Promise<NotificationText> {
+    if (m.channel !== "chat") return mailNotification(m);
+    const [connection, unread] = await Promise.all([
+      this.chatApps.connectionName(m.provider, m.accountEmail).catch(() => null),
+      this.pg
+        .query(`SELECT count(*)::int AS n FROM missives WHERE thread_id = $1 AND status = 'unread' AND direction = 'inbound'`, [m.threadId])
+        .then((r) => Number(r.rows[0]?.n ?? 0))
+        .catch(() => 0),
+    ]);
+    return chatNotification(m, { connection, unread });
   }
 
   /** To every browser the current user turned notifications on in. */
-  private async send(notification: { title: string; body: string; url: string; tag: string }): Promise<void> {
+  private async send(notification: NotificationText): Promise<void> {
     const { rows } = await this.pg.query(`SELECT id, subscription FROM push_subscriptions`);
     if (!rows.length) return;
     const payload = JSON.stringify(notification);

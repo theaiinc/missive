@@ -186,8 +186,35 @@ async fn request_notification_permission() -> String {
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn notify(title: String, body: String) {
-    mac_notify::post(&title, &body);
+fn notify(title: String, body: String, key: Option<String>, url: Option<String>) {
+    mac_notify::post(&title, &body, key.as_deref(), url.as_deref());
+}
+
+/// A notification was clicked: show the window on what it was about (`path`
+/// on the site, e.g. /thread/:id or /chat/:id). The page routes there itself
+/// when it's on the site (notifications.js), so it doesn't reload.
+pub(crate) fn open_from_notification(handle: &AppHandle, key: &str, path: &str) {
+    let Some(window) = handle.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    let site = Url::parse(SITE).expect("SITE is a URL");
+    let Some(target) = site.join(path).ok().filter(|u| u.origin() == site.origin() && path.starts_with('/')) else {
+        return;
+    };
+    let on_site = window.url().is_ok_and(|u| u.origin() == site.origin());
+    if on_site {
+        let script = format!(
+            "window.__missiveNotificationClicked ? window.__missiveNotificationClicked({key:?}, {path:?}) : location.assign({path:?})",
+            key = key,
+            path = format!("{}{}", target.path(), target.query().map(|q| format!("?{q}")).unwrap_or_default()),
+        );
+        let _ = window.eval(script);
+    } else {
+        let _ = window.navigate(target);
+    }
 }
 
 /// At launch: asks to notify if never asked; if notifications are off, offers
