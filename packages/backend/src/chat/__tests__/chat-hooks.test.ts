@@ -293,7 +293,7 @@ describe("Zalo's 2-second limit", () => {
 describe("readable Zalo names", () => {
   it("labels a sender Zalo won't name, and shows the OA's name instead of its id", async () => {
     fetchMock.mockImplementation((url: string) =>
-      url.includes("getoa") ? reply({ error: 0, data: { oa_id: "999", name: "Neko Coffee" } }) : reply({ error: -216, message: "no access" }),
+      url.includes("getoa") ? reply({ error: 0, data: { oa_id: "999", name: "Neko Coffee" } }) : reply({ error: 0, data: { display_name: "5387598391981684897" } }),
     );
     const { service, missives, connectors } = setup();
     const event = { app_id: "4321", event_name: "user_send_text", timestamp: "1700000000000", sender: { id: "5387598391981684897" }, recipient: { id: "999" }, message: { msg_id: "n1", text: "hello" } };

@@ -116,7 +116,9 @@ export class ZaloApi {
   async userName(accessToken: string, userId: string): Promise<string | undefined> {
     try {
       const json = await this.call(accessToken, `/v3.0/oa/user/detail?data=${encodeURIComponent(JSON.stringify({ user_id: userId }))}`);
-      return json.data?.display_name || undefined;
+      const name = String(json.data?.display_name ?? "").trim();
+      // Outside Vietnam Zalo may hand back the user's id as their name: that's no name.
+      return name && !/^\d+$/.test(name) ? name : undefined;
     } catch {
       return undefined;
     }
