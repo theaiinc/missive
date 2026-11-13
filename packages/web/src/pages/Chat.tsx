@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button";
 import { apiJson, retryDelay, retryServerErrors } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-/** A Telegram or Discord conversation a connected bot is in (GET /api/v1/chat-apps/conversations). */
+/** A conversation from a connected chat app (GET /api/v1/chat-apps/conversations). */
 export type ChatConversation = {
   id: string;
-  provider: "telegram" | "discord";
+  provider: keyof typeof CHAT_APP_NAMES;
   title: string;
   /** What the bot's connection is called, e.g. the project it's for. */
   label: string | null;
@@ -21,10 +21,12 @@ export type ChatConversation = {
   lastMessage: { sender: string; text: string; at: string; fromBot: boolean };
 };
 
-export const CHAT_APP_NAMES = { telegram: "Telegram", discord: "Discord" } as const;
+export const CHAT_APP_NAMES = { telegram: "Telegram", discord: "Discord", wecom: "WeCom", zalo: "Zalo" } as const;
 const APP_STYLE = {
   telegram: "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300",
   discord: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
+  wecom: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
+  zalo: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
 } as const;
 
 /** New messages show up without a refresh. */
@@ -220,7 +222,7 @@ function Conversation({ conversation }: { conversation: ChatConversation }) {
   );
 }
 
-/** Telegram and Discord conversations, from the bots connected in Settings. */
+/** Conversations from the chat apps connected in Settings (Telegram, Discord, WeCom, Zalo). */
 export function Chat() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
@@ -237,7 +239,7 @@ export function Chat() {
       <div className={cn("flex flex-col w-full md:w-80 lg:w-96 md:border-r border-border min-h-0", active && "hidden md:flex")}>
         <div className="pl-12 pr-4 md:px-4 py-4 border-b border-border bg-card">
           <h2 className="text-lg font-semibold text-foreground">Chat</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">Telegram and Discord, through the bots you connected.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Telegram, Discord, WeCom and Zalo, from the apps you connected.</p>
         </div>
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
@@ -255,7 +257,7 @@ export function Chat() {
               <MessagesSquare className="w-8 h-8 mb-3 opacity-40" />
               <p className="text-sm font-medium">No conversations yet</p>
               <p className="text-xs opacity-70 mt-1 max-w-xs">
-                Connect a Telegram or Discord bot in Settings, then add it to a group or send it a message.
+                Connect a chat app in Settings: a Telegram or Discord bot, WeCom, or a Zalo Official Account.
               </p>
               <Button asChild variant="outline" size="sm" className="mt-4">
                 <Link to="/settings#chat-apps">

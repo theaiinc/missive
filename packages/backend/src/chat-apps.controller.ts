@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
-import { ChatAppsService } from "./chat-apps.service";
+import { All, Body, Controller, Delete, Get, Param, Post, Req, Res } from "@nestjs/common";
+import type { Request, Response } from "express";
+import { ChatAppsService, type HookInput } from "./chat-apps.service";
 
 /**
  * Chat apps (Telegram, Discord): connecting bots and the Chat page's
@@ -17,8 +18,8 @@ export class ChatAppsController {
   }
 
   @Post("connect")
-  connect(@Body() body: { provider: string; token: string; label?: string }) {
-    return this.chatApps.connect(body?.provider, body?.token, body?.label ?? "");
+  connect(@Body() body: { provider: string; token?: string; label?: string; credentials?: HookInput }) {
+    return this.chatApps.connect(body?.provider, body?.token ?? "", body?.label ?? "", body?.credentials);
   }
 
   @Delete("accounts/:id")
@@ -35,5 +36,28 @@ export class ChatAppsController {
   @Post("conversations/:id/send")
   send(@Param("id") id: string, @Body() body: { text: string }) {
     return this.chatApps.send(id, body?.text);
+  }
+}
+
+/**
+ * Webhooks WeCom and Zalo call (public: see auth.middleware.ts). The key in
+ * the path picks the connection; ChatAppsService.hook checks each call's
+ * signature with that connection's secret before filing anything.
+ */
+@Controller("api/v1/hooks")
+export class ChatHooksController {
+  constructor(private readonly chatApps: ChatAppsService) {}
+
+  @All(":provider/:key")
+  async hook(@Param("provider") provider: string, @Param("key") key: string, @Req() req: Request, @Res() res: Response) {
+    const body =
+      typeof (req as any).rawBody === "string" ? (req as any).rawBody : typeof req.body === "string" ? req.body : "";
+    const reply = await this.chatApps.hook(provider, key, {
+      method: req.method,
+      query: req.query as Record<string, string | undefined>,
+      body,
+      signature: req.header("x-zevent-signature") ?? undefined,
+    });
+    res.status(reply.status).type("text/plain").send(reply.body);
   }
 }

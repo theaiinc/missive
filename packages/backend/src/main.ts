@@ -18,7 +18,15 @@ async function bootstrap() {
   // Calendar imports arrive as the .ics file itself (see CalendarController.importIcs).
   app.useBodyParser("text", { type: "text/calendar", limit: "10mb" });
   // Sending carries its attachments as base64 (up to 25 MB of files, ~34 MB encoded).
-  app.useBodyParser("json", { limit: "40mb" });
+  // Chat app webhooks: WeCom posts XML, and Zalo signs the exact JSON it sent,
+  // so the raw text is kept for checking (ChatHooksController).
+  app.useBodyParser("text", { type: ["text/xml", "application/xml"], limit: "1mb" });
+  app.useBodyParser("json", {
+    limit: "40mb",
+    verify: (req: any, _res: unknown, buf: Buffer) => {
+      if (String(req.url ?? "").startsWith("/api/v1/hooks/")) req.rawBody = buf.toString("utf8");
+    },
+  });
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN ?? "http://localhost:5173",

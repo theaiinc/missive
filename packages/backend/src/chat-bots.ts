@@ -7,9 +7,18 @@ import { createHash } from "node:crypto";
  * and turning each app's message into one shape (ChatMessage).
  */
 
-export type ChatProvider = "telegram" | "discord";
-export const CHAT_PROVIDERS: ChatProvider[] = ["telegram", "discord"];
-export const CHAT_PROVIDER_NAMES: Record<ChatProvider, string> = { telegram: "Telegram", discord: "Discord" };
+/** Apps Missive keeps a connection open to (a bot). */
+export type BotProvider = "telegram" | "discord";
+export const BOT_PROVIDERS: BotProvider[] = ["telegram", "discord"];
+/** Bots, plus the apps that call Missive's webhooks (chat/hook-providers.ts). */
+export type ChatProvider = BotProvider | "wecom" | "zalo";
+export const CHAT_PROVIDERS: ChatProvider[] = ["telegram", "discord", "wecom", "zalo"];
+export const CHAT_PROVIDER_NAMES: Record<ChatProvider, string> = {
+  telegram: "Telegram",
+  discord: "Discord",
+  wecom: "WeCom",
+  zalo: "Zalo",
+};
 
 /** One message, as Missive files it, whichever app it came from. */
 export type ChatMessage = {
@@ -340,12 +349,12 @@ export async function runDiscord(opts: {
 
 // ── Either app ────────────────────────────────────────────
 
-export function botIdentity(provider: ChatProvider, token: string): Promise<BotIdentity> {
+export function botIdentity(provider: BotProvider, token: string): Promise<BotIdentity> {
   return provider === "telegram" ? telegramIdentity(token) : discordIdentity(token);
 }
 
 /** Sends `text` to a chat and returns the sent message, as Missive files it. */
-export async function sendChat(provider: ChatProvider, token: string, botId: string, chatId: string, chatTitle: string, text: string): Promise<ChatMessage> {
+export async function sendChat(provider: BotProvider, token: string, botId: string, chatId: string, chatTitle: string, text: string): Promise<ChatMessage> {
   if (provider === "telegram") {
     const sent = await telegramSend(token, chatId, text);
     return { ...fromTelegram(sent, botId)!, chatTitle };
