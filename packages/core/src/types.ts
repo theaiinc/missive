@@ -24,6 +24,8 @@ export const ConnectorProvider = z.enum([
   "slack",
   "discord",
   "telegram",
+  "wecom", // 企业微信: a self-built app and WeChat Customer Service
+  "zalo", // a Zalo Official Account
   "facebook",
   "whatsapp",
   "crm",

@@ -9,7 +9,7 @@ import { ApiTokensService, TOKEN_PREFIX } from "./api-tokens";
 import { aegisTokenAllowed, looksLikeJwt, verifyAegisApiToken } from "./aegis-bearer";
 
 /** Routes that don't need a signed-in user (they check their own credentials). */
-const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/];
+const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/, /^\/api\/v1\/hooks\/(wecom|zalo)\/[\w-]+$/];
 
 /** Never with a personal API token: managing the tokens themselves, and administration. */
 const SESSION_ONLY = [/^\/api\/v1\/api-tokens(\/|$)/i, /^\/api\/v1\/admin(\/|$)/i];
