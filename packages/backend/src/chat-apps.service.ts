@@ -242,11 +242,12 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     if (!thread.missiveIds.includes(id)) thread.missiveIds.push(id);
     thread.messageCount = thread.missiveIds.length;
     // A conversation first filed under a bare id takes the person's name once it's known.
-    if (!message.fromBot && message.chatTitle && /^\d+$/.test(thread.subject ?? "") && message.chatTitle !== thread.subject) {
-      thread.subject = message.chatTitle;
-    }
+    const renamed =
+      !message.fromBot && !!message.chatTitle && /^\d+$/.test(thread.subject ?? "") && message.chatTitle !== thread.subject;
+    if (renamed) thread.subject = message.chatTitle;
     if (message.at > thread.lastActivityAt) thread.lastActivityAt = message.at;
     await this.storage.saveThread(thread);
+    if (renamed) await this.storage.renameThread(threadId, message.chatTitle);
 
     if (isNew && !message.fromBot) {
       this.events.emit("missive.received", { type: "missive.received", timestamp: now, payload: missive });
