@@ -37,6 +37,7 @@ import {
   chatThreadId,
   runDiscord,
   runTelegram,
+  runZaloBot,
   sendChat,
   type BotProvider,
   type ChatMessage,
@@ -149,7 +150,7 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     const provider = connector.provider as ChatProvider;
     if (isHookProvider(provider)) return;
     const { botToken, botId } = connector.tokens as BotCredentials;
-    const run = provider === "telegram" ? runTelegram : runDiscord;
+    const run = provider === "telegram" ? runTelegram : provider === "zalobot" ? runZaloBot : runDiscord;
     const name = `${provider} bot ${connector.email}`;
 
     void run({

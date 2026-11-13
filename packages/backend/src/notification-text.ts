@@ -19,6 +19,7 @@ export const PROVIDER_NAMES: Record<string, string> = {
   discord: "Discord",
   wecom: "WeCom",
   zalo: "Zalo",
+  zalobot: "Zalo",
 };
 
 const BODY_MAX = 180;
