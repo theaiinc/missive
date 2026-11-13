@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { refreshPush } from "@/lib/push";
 
@@ -13,6 +14,8 @@ export interface RecentMissive {
   accountEmail?: string;
   receivedAt?: string;
   createdAt?: string;
+  /** What to say about it (backend notification-text.ts); missing from an older server. */
+  notification?: { title: string; body: string; url: string; tag: string };
 }
 
 export interface NotificationItem {
@@ -60,6 +63,29 @@ export function useNotifications() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [digest, setDigest] = useState<DigestInfo | null>(null);
   const [digestLoaded, setDigestLoaded] = useState(false);
+  const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
+  // A notification clicked: the service worker (public/sw.js) or the desktop
+  // app (desktop notifications.js) asks this page to open what it was about.
+  useEffect(() => {
+    const open = (url: unknown) => {
+      if (typeof url !== "string" || !url.startsWith("/") || url.startsWith("//")) return;
+      window.focus();
+      navigateRef.current(url);
+    };
+    const onWorker = (e: MessageEvent) => {
+      if (e.data?.type === "missive:open") open(e.data.url);
+    };
+    const onDesktop = (e: Event) => open((e as CustomEvent<string>).detail);
+    navigator.serviceWorker?.addEventListener("message", onWorker);
+    window.addEventListener("missive:open", onDesktop);
+    return () => {
+      navigator.serviceWorker?.removeEventListener("message", onWorker);
+      window.removeEventListener("missive:open", onDesktop);
+    };
+  }, []);
 
   // With push on (lib/push.ts), the service worker shows system
   // notifications, even with Missive closed; the page only shows toasts.
@@ -114,9 +140,9 @@ export function useNotifications() {
       const items: NotificationItem[] = data.missives.map((msg) => ({
         id: msg.id,
         threadId: msg.threadId,
-        href: missiveHref(msg),
-        sender: msg.from.name ?? msg.from.address,
-        subject: msg.subject ?? "(no subject)",
+        href: describe(msg).url,
+        sender: describe(msg).title,
+        subject: describe(msg).body,
         accountEmail: msg.accountEmail,
         timestamp: new Date(msg.receivedAt ?? msg.createdAt ?? Date.now()).getTime(),
         read: false,
@@ -133,29 +159,27 @@ export function useNotifications() {
       setUnreadCount(unreadRef.current);
       updateTitleBadge(unreadRef.current);
 
-      // Show toasts and browser notifications
+      // Toasts and system notifications: one per conversation, the newest
+      // (they come newest first), so a burst of chat messages is one alert.
+      const shown = new Set<string>();
       for (const msg of data.missives) {
-        const sender = msg.from.name ?? msg.from.address;
-        const subject = msg.subject ?? "(no subject)";
-        const label = msg.accountEmail ? ` [${msg.accountEmail}]` : "";
+        const n = describe(msg);
+        if (shown.has(n.tag)) continue;
+        shown.add(n.tag);
 
-        toast(`${sender}${label}`, {
-          description: subject,
-          action: {
-            label: "View",
-            onClick: () => {
-              window.location.href = missiveHref(msg);
-            },
-          },
+        toast(n.title, {
+          description: n.body,
+          action: { label: "View", onClick: () => navigateRef.current(n.url) },
           duration: 5000,
         });
 
-        // Browser notification
         if (!pushOnRef.current && "Notification" in window && Notification.permission === "granted") {
-          new Notification(`Missive: ${sender}`, {
-            body: subject,
-            icon: "/missive.svg",
-          });
+          const note = new Notification(n.title, { body: n.body, tag: n.tag, icon: "/missive.svg", data: { url: n.url } });
+          note.onclick = () => {
+            window.focus();
+            navigateRef.current(n.url);
+            note.close();
+          };
         }
       }
     } catch {
@@ -222,6 +246,15 @@ export function useNotifications() {
     dismissNotification,
     markRead,
   };
+}
+
+/** The server's words for it, or the same from what's at hand (an older server). */
+function describe(m: RecentMissive): { title: string; body: string; url: string; tag: string } {
+  if (m.notification) return m.notification;
+  const sender = m.from.name ?? m.from.address;
+  if (m.channel === "chat") return { title: m.subject || sender, body: `${sender}: ${m.body ?? ""}`, url: missiveHref(m), tag: `chat:${m.threadId}` };
+  const label = m.accountEmail ? ` [${m.accountEmail}]` : "";
+  return { title: `${sender}${label}`, body: m.subject ?? "(no subject)", url: missiveHref(m), tag: `thread:${m.threadId ?? m.id}` };
 }
 
 /** A chat message (Telegram, Discord) opens on the Chat page; anything else on its thread. */

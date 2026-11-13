@@ -19,6 +19,7 @@ import { WritingError } from "./writing";
 import { requireUser } from "./request-context";
 import { GmailSendService } from "./gmail-send.service";
 import { replyRecipients } from "./addresses";
+import { PushService } from "./push.service";
 
 @Controller("api/v1")
 export class MissiveController {
@@ -27,7 +28,8 @@ export class MissiveController {
     private readonly searchService: SearchService,
     private readonly organizer: OrganizerService,
     private readonly storage: StorageService,
-    private readonly gmail: GmailSendService
+    private readonly gmail: GmailSendService,
+    private readonly push: PushService
   ) {}
 
   @Get("missive/:id")
@@ -54,7 +56,8 @@ export class MissiveController {
       return { missives: [] };
     }
     const missives = await this.missive.getRecentMissives(since, limit ? parseInt(limit, 10) : undefined);
-    return { missives };
+    // What the page's own notifications say (the desktop app has no web push).
+    return { missives: await Promise.all(missives.map(async (m) => ({ ...m, notification: await this.push.describe(m).catch(() => undefined) }))) };
   }
 
   @Get("search")

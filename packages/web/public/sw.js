@@ -27,18 +27,24 @@ self.addEventListener("push", (event) => {
   );
 });
 
+// Clicking one opens what it was about (/thread/:id, /chat/:id) in Missive's
+// window if one is open: the page routes there itself (useNotifications.ts),
+// since a window this worker doesn't control can't be navigated from here.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL(event.notification.data?.url || "/inbox", self.location.origin).href;
+  const path = event.notification.data?.url || "/inbox";
+  const url = new URL(path, self.location.origin);
+  if (url.origin !== self.location.origin) return;
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
       if (open) {
-        await open.focus();
-        return open.navigate(url);
+        await open.focus().catch(() => {});
+        open.postMessage({ type: "missive:open", url: url.pathname + url.search });
+        return;
       }
-      return self.clients.openWindow(url);
+      return self.clients.openWindow(url.href);
     })(),
   );
 });
