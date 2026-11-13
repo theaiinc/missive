@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatMissiveId, chatThreadId, fromDiscord, fromTelegram, type DiscordNames } from "../chat-bots";
+import { chatMissiveId, chatThreadId, fromDiscord, fromTelegram, fromZaloBot, zaloBotChunks, type DiscordNames } from "../chat-bots";
 
 const BOT = "999";
 
@@ -72,5 +72,48 @@ describe("chat ids", () => {
     expect(chatThreadId("u1", "telegram", "-1001")).not.toBe(chatThreadId("u2", "telegram", "-1001"));
     expect(chatThreadId("u1", "telegram", "1")).not.toBe(chatThreadId("u1", "discord", "1"));
     expect(chatMissiveId("u1", "discord", "c1", "m1")).toMatch(/^m_[0-9a-f]{26}$/);
+  });
+});
+
+describe("fromZaloBot", () => {
+  const base = {
+    message_id: "2d758cb5e222177a4e35",
+    date: 1750316131602,
+    from: { id: "6ede9afa66b88fe6d6a9", display_name: "Ted", is_bot: false },
+    chat: { id: "6ede9afa66b88fe6d6a9", chat_type: "PRIVATE" },
+  };
+
+  it("files a private text message under the sender's name", () => {
+    const m = fromZaloBot({ event_name: "message.text.received", message: { ...base, message_type: "CHAT_TEXT", text: "Hello" } });
+    expect(m).toEqual({
+      chatId: "6ede9afa66b88fe6d6a9",
+      chatTitle: "Ted",
+      messageId: "2d758cb5e222177a4e35",
+      senderId: "6ede9afa66b88fe6d6a9",
+      senderName: "Ted",
+      text: "Hello",
+      fromBot: false,
+      at: new Date(1750316131602).toISOString(),
+    });
+  });
+
+  it("shows photos with their caption, and groups as a group", () => {
+    const m = fromZaloBot({
+      event_name: "message.image.received",
+      message: { ...base, chat: { id: "g1", chat_type: "GROUP" }, photo_url: "https://x/p.jpg", caption: "Product photo" },
+    });
+    expect(m?.text).toBe("[photo] Product photo");
+    expect(m?.chatTitle).toBe("Zalo group");
+    expect(fromZaloBot({ event_name: "message.sticker.received", message: { ...base, sticker: "abc" } })?.text).toBe("[sticker]");
+    expect(fromZaloBot({ event_name: "something.else" })).toBeNull();
+  });
+});
+
+describe("zaloBotChunks", () => {
+  it("keeps short text whole and splits long text at a space", () => {
+    expect(zaloBotChunks("hi")).toEqual(["hi"]);
+    const parts = zaloBotChunks(`${"a".repeat(1500)} ${"b".repeat(1000)}`);
+    expect(parts).toEqual(["a".repeat(1500), "b".repeat(1000)]);
+    expect(zaloBotChunks("x".repeat(4500)).map((p) => p.length)).toEqual([2000, 2000, 500]);
   });
 });

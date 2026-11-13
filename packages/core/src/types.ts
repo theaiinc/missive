@@ -26,6 +26,7 @@ export const ConnectorProvider = z.enum([
   "telegram",
   "wecom", // 企业微信: a self-built app and WeChat Customer Service
   "zalo", // a Zalo Official Account
+  "zalobot", // a Zalo Bot (bot.zaloplatforms.com), made from a personal Zalo account
   "facebook",
   "whatsapp",
   "crm",

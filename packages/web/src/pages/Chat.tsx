@@ -21,10 +21,11 @@ export type ChatConversation = {
   lastMessage: { sender: string; text: string; at: string; fromBot: boolean };
 };
 
-export const CHAT_APP_NAMES = { telegram: "Telegram", discord: "Discord", wecom: "WeCom", zalo: "Zalo" } as const;
+export const CHAT_APP_NAMES = { telegram: "Telegram", discord: "Discord", zalobot: "Zalo Bot", wecom: "WeCom", zalo: "Zalo" } as const;
 const APP_STYLE = {
   telegram: "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300",
   discord: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
+  zalobot: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
   wecom: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
   zalo: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
 } as const;

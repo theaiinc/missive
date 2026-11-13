@@ -41,6 +41,8 @@ const HELP: Record<ChatProvider, string> = {
   telegram: "Create a bot with @BotFather, and turn its privacy mode off (/setprivacy → Disable) so it sees group messages. Then add it to your groups.",
   discord:
     "Create an application in the Discord Developer Portal, turn on Message Content Intent for its bot, and invite the bot to your server. Paste the bot's token here.",
+  zalobot:
+    "A bot people message on Zalo. In the Zalo app, open the Zalo Bot Manager account, choose Tạo bot (its name must start with \"Bot\"), and paste the Bot Token Zalo sends you. In groups the bot only sees messages that @mention it.",
   wecom:
     "Brings in messages members send your WeCom self-built app, and WeChat Customer Service (微信客服) chats with WeChat users once the Customer Service account is handed to that app. After connecting, Missive shows the callback URL, Token and EncodingAESKey to enter under the app's Receive Messages API settings. WeCom only accepts API calls from the app's trusted IPs (企业可信IP).",
   zalo:

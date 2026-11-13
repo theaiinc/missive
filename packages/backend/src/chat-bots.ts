@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
 
 /**
- * Chat apps (Telegram, Discord) reach Missive through a bot the person
- * creates and connects with its token. These are the parts that talk to each
- * app: a Telegram long-poll loop, a minimal Discord gateway client, sending,
+ * Chat apps (Telegram, Discord, Zalo Bot) reach Missive through a bot the
+ * person creates and connects with its token. These are the parts that talk to
+ * each app: Telegram and Zalo Bot long-poll loops, a minimal Discord gateway
+ * client, sending,
  * and turning each app's message into one shape (ChatMessage).
  */
 
 /** Apps Missive keeps a connection open to (a bot). */
-export type BotProvider = "telegram" | "discord";
-export const BOT_PROVIDERS: BotProvider[] = ["telegram", "discord"];
+export type BotProvider = "telegram" | "discord" | "zalobot";
+export const BOT_PROVIDERS: BotProvider[] = ["telegram", "discord", "zalobot"];
 /** Bots, plus the apps that call Missive's webhooks (chat/hook-providers.ts). */
 export type ChatProvider = BotProvider | "wecom" | "zalo";
-export const CHAT_PROVIDERS: ChatProvider[] = ["telegram", "discord", "wecom", "zalo"];
+export const CHAT_PROVIDERS: ChatProvider[] = ["telegram", "discord", "zalobot", "wecom", "zalo"];
 export const CHAT_PROVIDER_NAMES: Record<ChatProvider, string> = {
   telegram: "Telegram",
   discord: "Discord",
+  zalobot: "Zalo Bot",
   wecom: "WeCom",
   zalo: "Zalo",
 };
@@ -168,6 +170,126 @@ export async function runTelegram(opts: {
     } catch (e) {
       if (opts.signal.aborted) return;
       if (e instanceof BotAuthError) throw e;
+      opts.onError(e);
+      await sleep(5000, opts.signal);
+    }
+  }
+}
+
+// ── Zalo Bot ──────────────────────────────────────────────
+// A bot any personal Zalo account can create (Zalo Bot Manager → Tạo bot).
+// https://bot.zaloplatforms.com/docs/
+
+const ZALO_BOT_API = "https://bot-api.zaloplatforms.com";
+
+async function zaloBotCall<T>(token: string, method: string, body?: object, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${ZALO_BOT_API}/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  });
+  const json = (await res.json().catch(() => null)) as { ok: boolean; result?: T; description?: string; error_code?: number } | null;
+  const code = Number(json?.error_code ?? res.status);
+  if (code === 401 || res.status === 401) throw new BotAuthError("Zalo didn't accept this bot token");
+  if (!json?.ok) throw new ZaloBotError(code, json?.description ?? `Zalo Bot ${method} failed (${res.status})`);
+  return json.result as T;
+}
+
+class ZaloBotError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(message);
+  }
+}
+
+export async function zaloBotIdentity(token: string): Promise<BotIdentity> {
+  const me = await zaloBotCall<{ id: string; account_name?: string; display_name?: string }>(token, "getMe");
+  return { id: String(me.id), handle: me.display_name || me.account_name || String(me.id) };
+}
+
+export type ZaloBotMessage = {
+  message_id: string;
+  /** Milliseconds since epoch. */
+  date: number;
+  message_type?: string;
+  from: { id: string; display_name?: string; is_bot?: boolean };
+  chat: { id: string; chat_type?: string };
+  text?: string;
+  photo_url?: string;
+  caption?: string;
+  sticker?: string;
+  voice_url?: string;
+};
+export type ZaloBotEvent = { event_name: string; message?: ZaloBotMessage };
+
+export function fromZaloBot(e: ZaloBotEvent): ChatMessage | null {
+  const m = e.message;
+  if (!m?.message_id || !m.chat?.id) return null;
+  const kind = /^message\.(\w+)\.received$/.exec(e.event_name)?.[1];
+  const placeholder =
+    kind === "image" ? "[photo]" : kind === "sticker" ? "[sticker]" : kind === "voice" ? "[voice message]" : kind === "unsupported" ? "[message]" : "";
+  const caption = m.text ?? m.caption ?? "";
+  const text = placeholder && caption ? `${placeholder} ${caption}` : caption || placeholder;
+  if (!text) return null;
+  const sender = m.from?.display_name?.trim() || "Zalo user";
+  const group = m.chat.chat_type === "GROUP";
+  return {
+    chatId: String(m.chat.id),
+    chatTitle: group ? "Zalo group" : sender,
+    messageId: String(m.message_id),
+    senderId: String(m.from?.id ?? m.chat.id),
+    senderName: sender,
+    text,
+    fromBot: !!m.from?.is_bot,
+    at: new Date(Number(m.date) || Date.now()).toISOString(),
+  };
+}
+
+/** Zalo takes at most 2000 characters a message, so longer replies go in parts. */
+export function zaloBotChunks(text: string, max = 2000): string[] {
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf("\n", max);
+    if (cut < max / 2) cut = rest.lastIndexOf(" ", max);
+    if (cut < max / 2) cut = max;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^[\n ]/, "");
+  }
+  if (rest || parts.length === 0) parts.push(rest);
+  return parts;
+}
+
+export async function zaloBotSend(token: string, chatId: string, text: string): Promise<{ message_id: string; date: number }> {
+  let last: { message_id: string; date: number } | undefined;
+  for (const part of zaloBotChunks(text)) last = await zaloBotCall(token, "sendMessage", { chat_id: chatId, text: part });
+  return last!;
+}
+
+/** Long-polls Zalo for new messages until the signal aborts. */
+export async function runZaloBot(opts: {
+  token: string;
+  botId: string;
+  signal: AbortSignal;
+  onMessage: (m: ChatMessage) => Promise<void>;
+  onError: (e: unknown) => void;
+}): Promise<void> {
+  // getUpdates doesn't work while a webhook is set.
+  await zaloBotCall(opts.token, "deleteWebhook", {}, opts.signal).catch((e) => {
+    if (e instanceof BotAuthError) throw e;
+  });
+  while (!opts.signal.aborted) {
+    try {
+      const result = await zaloBotCall<ZaloBotEvent | ZaloBotEvent[] | null>(opts.token, "getUpdates", { timeout: "25" }, opts.signal);
+      for (const event of Array.isArray(result) ? result : result ? [result] : []) {
+        const message = fromZaloBot(event);
+        if (message) await opts.onMessage(message);
+      }
+    } catch (e) {
+      if (opts.signal.aborted) return;
+      if (e instanceof BotAuthError) throw e;
+      // 408: nothing arrived before the timeout.
+      if (e instanceof ZaloBotError && e.code === 408) continue;
       opts.onError(e);
       await sleep(5000, opts.signal);
     }
@@ -350,6 +472,7 @@ export async function runDiscord(opts: {
 // ── Either app ────────────────────────────────────────────
 
 export function botIdentity(provider: BotProvider, token: string): Promise<BotIdentity> {
+  if (provider === "zalobot") return zaloBotIdentity(token);
   return provider === "telegram" ? telegramIdentity(token) : discordIdentity(token);
 }
 
@@ -358,6 +481,19 @@ export async function sendChat(provider: BotProvider, token: string, botId: stri
   if (provider === "telegram") {
     const sent = await telegramSend(token, chatId, text);
     return { ...fromTelegram(sent, botId)!, chatTitle };
+  }
+  if (provider === "zalobot") {
+    const sent = await zaloBotSend(token, chatId, text);
+    return {
+      chatId,
+      chatTitle,
+      messageId: String(sent?.message_id ?? `sent:${Date.now()}`),
+      senderId: botId,
+      senderName: "You",
+      text,
+      fromBot: true,
+      at: new Date(Number(sent?.date) || Date.now()).toISOString(),
+    };
   }
   const sent = await discordSend(token, chatId, text);
   return { ...fromDiscord(sent, botId, { channels: new Map(), guilds: new Map() })!, chatTitle };
