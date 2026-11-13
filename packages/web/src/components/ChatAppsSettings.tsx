@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlertTriangle, Copy, Loader2, Plus, Trash2 } from "lucide-react";
@@ -19,7 +19,7 @@ type ChatAccount = {
   needsReauth: boolean;
   lastError: string | null;
   /** WeCom and Zalo: what to enter in the app so it calls Missive. */
-  setup?: { webhookUrl: string; token?: string; aesKey?: string };
+  setup?: { webhookUrl: string; token?: string; aesKey?: string; needsSecret?: boolean };
 };
 
 /** WeCom and Zalo connect with several credentials instead of one bot token. */
@@ -31,10 +31,8 @@ const FIELDS: Partial<Record<ChatProvider, Field[]>> = {
     { key: "secret", label: "App Secret", secret: true, hint: "The self-built app's Secret" },
   ],
   zalo: [
-    { key: "appId", label: "App ID", hint: "developers.zalo.me → your app" },
-    { key: "appSecret", label: "App Secret", secret: true },
-    { key: "oaSecretKey", label: "OA Secret Key", secret: true, hint: "Webhook settings → OA Secret Key" },
-    { key: "refreshToken", label: "OA refresh token", secret: true, hint: "From the OA authorization (v4); Missive renews it from then on" },
+    { key: "appId", label: "App ID", hint: "developers.zalo.me → your app → Settings" },
+    { key: "appSecret", label: "App Secret", secret: true, hint: "Same page: Khóa bí mật của ứng dụng" },
   ],
 };
 const isHook = (p: ChatProvider) => !!FIELDS[p];
@@ -46,7 +44,7 @@ const HELP: Record<ChatProvider, string> = {
   wecom:
     "Brings in messages members send your WeCom self-built app, and WeChat Customer Service (微信客服) chats with WeChat users once the Customer Service account is handed to that app. After connecting, Missive shows the callback URL, Token and EncodingAESKey to enter under the app's Receive Messages API settings. WeCom only accepts API calls from the app's trusted IPs (企业可信IP).",
   zalo:
-    "Brings in messages followers send your Zalo Official Account, and lets you answer them. After connecting, enter the webhook URL Missive shows in your Zalo app's Webhook settings and turn on the user_send_* and oa_send_* events.",
+    "Brings in messages followers send your Zalo Official Account, and lets you answer them. Use a Zalo app made for Missive (not one another service already uses: Zalo replaces the OA's token each time it's renewed). Set the app's Official Account Callback Url to https://missive.theaiinc.com/api/v1/chat-apps/zalo/callback, then authorize: an admin of the OA clicks Allow on Zalo's page.",
 };
 
 function Copyable({ label, value }: { label: string; value: string }) {
@@ -81,6 +79,31 @@ export function ChatAppsSettings() {
   const [token, setToken] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
+
+  // Back from Zalo's Allow page (ChatAppsService.zaloCallback).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get("chat_error");
+    if (params.get("chat_connected") === "zalo") toast.success("Zalo OA connected. Now set its webhook (details below).");
+    else if (error) toast.error(error);
+    if (error || params.get("chat_connected")) window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+  }, []);
+
+  const saveSecret = async (account: ChatAccount) => {
+    try {
+      await apiJson(`/api/v1/chat-apps/accounts/${encodeURIComponent(account.id)}/zalo-secret`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ oaSecretKey: secrets[account.id] ?? "" }),
+      });
+      toast.success("OA Secret Key saved. Messages to the OA come in from now on.");
+      setSecrets((v) => ({ ...v, [account.id]: "" }));
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save it");
+    }
+  };
 
   const refresh = () =>
     Promise.all([
@@ -93,6 +116,16 @@ export function ChatAppsSettings() {
     if (!adding || busy) return;
     setBusy(true);
     try {
+      if (adding === "zalo") {
+        // An OA admin allows the app on Zalo's page, which then comes back to Missive.
+        const { url } = await apiJson<{ url: string }>("/api/v1/chat-apps/zalo/authorize", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ appId: fields.appId, appSecret: fields.appSecret, label }),
+        });
+        window.location.assign(url);
+        return;
+      }
       const account = await apiJson<ChatAccount>("/api/v1/chat-apps/connect", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -166,8 +199,37 @@ export function ChatAppsSettings() {
                         {a.setup ? "Receives messages at its webhook" : a.running ? "Listening for messages" : "Starting…"}
                       </p>
                     )}
+                    {a.setup?.needsSecret && (
+                      <form
+                        className="mt-2 space-y-1"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void saveSecret(a);
+                        }}
+                      >
+                        <label htmlFor={`secret-${a.id}`} className="text-xs font-medium text-foreground">
+                          OA Secret Key
+                        </label>
+                        <p className="text-[11px] text-muted-foreground">
+                          Enter the webhook URL below in the Zalo app's Webhook page; Zalo then shows the OA Secret Key. Paste it here. Until then nothing is
+                          filed.
+                        </p>
+                        <div className="flex gap-2">
+                          <Input
+                            id={`secret-${a.id}`}
+                            type="password"
+                            autoComplete="off"
+                            value={secrets[a.id] ?? ""}
+                            onChange={(e) => setSecrets((v) => ({ ...v, [a.id]: e.target.value }))}
+                          />
+                          <Button type="submit" size="sm" disabled={!secrets[a.id]?.trim()}>
+                            Save
+                          </Button>
+                        </div>
+                      </form>
+                    )}
                     {a.setup && (
-                      <details className="mt-2">
+                      <details className="mt-2" open={a.setup.needsSecret}>
                         <summary className="cursor-pointer text-xs text-primary">Webhook details to enter in {CHAT_APP_NAMES[provider]}</summary>
                         <div className="mt-2 space-y-2">
                           <Copyable label={provider === "wecom" ? "URL" : "Webhook URL"} value={a.setup.webhookUrl} />
@@ -235,7 +297,7 @@ export function ChatAppsSettings() {
                       disabled={busy || (FIELDS[provider] ? FIELDS[provider]!.some((f) => !f.optional && !fields[f.key]?.trim()) : !token.trim())}
                     >
                       {busy && <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />}
-                      Connect
+                      {provider === "zalo" ? "Authorize with Zalo" : "Connect"}
                     </Button>
                     <Button
                       type="button"

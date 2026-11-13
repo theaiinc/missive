@@ -216,3 +216,54 @@ describe("Zalo webhook", () => {
     expect(connectors.get("zalo:x")!.tokens).toMatchObject({ accessToken: "access-2", refreshToken: "refresh-2" });
   });
 });
+
+describe("Zalo connect through the OA admin's Allow", () => {
+  it("trades the code for tokens, files nothing until the OA Secret Key is added, then files messages", async () => {
+    process.env.APP_URL = "https://missive.theaiinc.com";
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/v4/oa/access_token")) {
+        expect(String(init!.body)).toContain("grant_type=authorization_code");
+        return reply({ access_token: "acc", refresh_token: "ref", expires_in: "90000" });
+      }
+      if (url.includes("/oa/getoa")) return reply({ error: 0, data: { oa_id: "555", name: "Acme OA" } });
+      return reply({ error: 0, data: { display_name: "An" } });
+    });
+    const { service, missives, connectors } = setup();
+    const { url } = await runAsUser(owner as never, async () => service.zaloAuthorize("4321", "zalo-app-secret", ""));
+    const permission = new URL(url);
+    expect(permission.origin + permission.pathname).toBe("https://oauth.zaloapp.com/v4/oa/permission");
+    expect(permission.searchParams.get("redirect_uri")).toBe("https://missive.theaiinc.com/api/v1/chat-apps/zalo/callback");
+    const state = permission.searchParams.get("state")!;
+
+    // Someone else's session can't finish it; a wrong state is refused.
+    const intruder = { ...owner, id: "00000000-0000-0000-0000-000000000001" };
+    expect(await runAsUser(intruder as never, () => service.zaloCallback("code", state))).toContain("chat_error");
+
+    const { url: url2 } = await runAsUser(owner as never, async () => service.zaloAuthorize("4321", "zalo-app-secret", ""));
+    const state2 = new URL(url2).searchParams.get("state")!;
+    expect(await runAsUser(owner as never, () => service.zaloCallback("code", state2))).toBe("/settings?chat_connected=zalo#chat-apps");
+    const connector = [...connectors.values()].find((c) => c.email === "555")!;
+    const creds = connector.tokens as ZaloCredentials;
+    expect(creds).toMatchObject({ appId: "4321", oaId: "555", refreshToken: "ref", accessToken: "acc", oaSecretKey: "" });
+    expect(connector.label).toBe("Acme OA");
+
+    // The state can't be used twice.
+    expect(await runAsUser(owner as never, () => service.zaloCallback("code", state2))).toContain("chat_error");
+  });
+
+  it("answers but files nothing while the OA Secret Key is missing", async () => {
+    const { service, missives, connectors } = setup();
+    (connectors.get("zalo:x")!.tokens as ZaloCredentials).oaSecretKey = "";
+    const res = await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: '{"event_name":"user_send_text"}' });
+    expect(res).toEqual({ status: 200, body: "ok" });
+    expect(missives.size).toBe(0);
+
+    await runAsUser(owner as never, () => service.setZaloSecret("zalo:x", "oa-secret"));
+    fetchMock.mockImplementation(() => reply({ error: 0, data: { display_name: "An" } }));
+    const event = { app_id: "4321", event_name: "user_send_text", timestamp: "1700000000000", sender: { id: "u1" }, recipient: { id: "999" }, message: { msg_id: "m9", text: "hi" } };
+    const raw = JSON.stringify(event);
+    const signature = "mac=" + sha(`4321${raw}1700000000000oa-secret`);
+    expect((await service.hook("zalo", "zalo-hook-key", { method: "POST", query: {}, body: raw, signature })).status).toBe(200);
+    expect(missives.size).toBe(1);
+  });
+});

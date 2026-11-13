@@ -74,6 +74,27 @@ export class ZaloApi {
     };
   }
 
+  /** Trades the code from the OA admin's "Allow" (the permission page's redirect) for the OA's tokens. */
+  async exchangeCode(code: string): Promise<ZaloTokens> {
+    const res = await this.fetchFn(`${OAUTH}/access_token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", secret_key: this.appSecret },
+      body: new URLSearchParams({ code, app_id: this.appId, grant_type: "authorization_code" }),
+    });
+    const json: any = await res.json();
+    if (!json.access_token) throw new ZaloError(Number(json.error ?? -1), json.error_description ?? json.message ?? "authorization refused");
+    return {
+      accessToken: json.access_token,
+      accessTokenUntil: Date.now() + (Number(json.expires_in ?? 90000) - 300) * 1000,
+      refreshToken: json.refresh_token,
+    };
+  }
+
+  /** The page where an OA admin lets this app act for the OA; Zalo then redirects to `redirectUri` with a code. */
+  permissionUrl(redirectUri: string, state: string): string {
+    return `${OAUTH}/permission?${new URLSearchParams({ app_id: this.appId, redirect_uri: redirectUri, state })}`;
+  }
+
   private async call(accessToken: string, path: string, body?: unknown): Promise<any> {
     const res = await this.fetchFn(`${OPENAPI}${path}`, {
       method: body === undefined ? "GET" : "POST",

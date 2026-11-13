@@ -11,6 +11,7 @@ import { PostgresService } from "./storage/postgres.service";
 import {
   HookInputError,
   isHookProvider,
+  newHookKey,
   webhookUrl,
   wecomApi,
   wecomCallback,
@@ -270,7 +271,7 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
       const w = c as WecomCredentials;
       return { webhookUrl: url, token: w.token, aesKey: w.aesKey };
     }
-    return { webhookUrl: url };
+    return { webhookUrl: url, needsSecret: !(c as ZaloCredentials).oaSecretKey };
   }
 
   /** Checks the token with the app, stores it, and starts the bot. */
@@ -296,6 +297,88 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     return (await this.accounts()).find((a) => a.id === connector.id)!;
   }
 
+  // ── Zalo: connecting through the OA admin's "Allow" ──
+
+  /** Started authorizations, by state; each lasts 15 minutes. */
+  private readonly zaloPending = new Map<string, { userId: string; appId: string; appSecret: string; label: string; until: number }>();
+
+  private zaloRedirect() {
+    return `${(process.env.APP_URL ?? "").replace(/\/$/, "")}/api/v1/chat-apps/zalo/callback`;
+  }
+
+  /** Where to send the person so an OA admin can let the Zalo app act for the OA. */
+  zaloAuthorize(appId: string, appSecret: string, label: string): { url: string } {
+    const id = appId?.trim();
+    const secret = appSecret?.trim();
+    if (!id || !/^\d+$/.test(id) || !secret) throw new BadRequestException("The Zalo app's App ID and App Secret are required");
+    const now = Date.now();
+    for (const [k, v] of this.zaloPending) if (v.until < now) this.zaloPending.delete(k);
+    const state = newHookKey();
+    this.zaloPending.set(state, { userId: requireUser().id, appId: id, appSecret: secret, label: label?.trim() ?? "", until: now + 15 * 60_000 });
+    return { url: new ZaloApi(id, secret).permissionUrl(this.zaloRedirect(), state) };
+  }
+
+  /** Zalo's redirect after "Allow": trades the code for the OA's tokens and connects the OA. Returns where to go next. */
+  async zaloCallback(code: string | undefined, state: string | undefined): Promise<string> {
+    const back = (q: string) => `/settings?${q}#chat-apps`;
+    const pending = state ? this.zaloPending.get(state) : undefined;
+    if (!pending || pending.until < Date.now() || pending.userId !== requireUser().id) {
+      return back("chat_error=" + encodeURIComponent("That Zalo authorization expired. Start it again from Settings."));
+    }
+    this.zaloPending.delete(state!);
+    if (!code) return back("chat_error=" + encodeURIComponent("Zalo didn't send an authorization code (was Allow clicked?)"));
+    try {
+      const api = new ZaloApi(pending.appId, pending.appSecret);
+      const tokens = await api.exchangeCode(code);
+      const oa = await api.oaInfo(tokens.accessToken!);
+      const existing = await this.store.getByEmail("zalo", oa.oaId);
+      const old = existing?.tokens as ZaloCredentials | undefined;
+      const credentials: ZaloCredentials = {
+        appId: pending.appId,
+        appSecret: pending.appSecret,
+        // The same app keeps its webhook URL and OA Secret Key when it's connected again.
+        oaSecretKey: old?.appId === pending.appId ? old.oaSecretKey : "",
+        oaId: oa.oaId,
+        refreshToken: tokens.refreshToken,
+        accessToken: tokens.accessToken,
+        accessTokenUntil: tokens.accessTokenUntil,
+        hookKey: old?.hookKey ?? newHookKey(),
+      };
+      await this.saveHook("zalo", oa.oaId, pending.label || oa.name, credentials, existing?.connectedAt);
+      return back("chat_connected=zalo");
+    } catch (e) {
+      return back("chat_error=" + encodeURIComponent(`Zalo didn't connect: ${e instanceof ZaloError ? e.message : safeError(e)}`));
+    }
+  }
+
+  /** Adds the OA Secret Key Zalo shows once the webhook URL is saved; webhook calls are filed from then on. */
+  async setZaloSecret(id: string, oaSecretKey: string): Promise<ChatAccount> {
+    const connector = await this.store.get(id);
+    if (!connector || connector.provider !== "zalo") throw new NotFoundException("No such Zalo connection");
+    const key = oaSecretKey?.trim();
+    if (!key) throw new BadRequestException("The OA Secret Key is required");
+    await this.saveTokens(connector, { ...(connector.tokens as ZaloCredentials), oaSecretKey: key });
+    return (await this.accounts()).find((a) => a.id === id)!;
+  }
+
+  /** Stores a WeCom or Zalo connection and (re)registers its webhook key. */
+  private async saveHook(provider: HookProvider, handle: string, label: string, credentials: WecomCredentials | ZaloCredentials, connectedAt?: string) {
+    const connector = await this.store.save(provider, {
+      provider,
+      label,
+      email: handle,
+      tokens: credentials,
+      connectedAt: connectedAt ?? new Date().toISOString(),
+    });
+    await this.pg.query(`DELETE FROM chat_webhooks WHERE connector_id = $1`, [connector.id]);
+    await this.pg.query(`INSERT INTO chat_webhooks (key_hash, connector_id, provider) VALUES ($1, $2, $3)`, [
+      hashKey(credentials.hookKey),
+      connector.id,
+      provider,
+    ]);
+    return connector;
+  }
+
   /** Checks WeCom or Zalo credentials, stores them, and gives the connection its webhook URL. */
   private async connectHook(provider: HookProvider, input: HookInput, label: string): Promise<ChatAccount> {
     let connected: { credentials: WecomCredentials | ZaloCredentials; handle: string; name?: string };
@@ -312,17 +395,12 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
     } else if (existing) {
       connected.credentials.hookKey = (existing.tokens as ZaloCredentials).hookKey;
     }
-    const connector = await this.store.save(provider, {
+    const connector = await this.saveHook(
       provider,
-      label: label?.trim() || connected.name || connected.handle,
-      email: connected.handle,
-      tokens: connected.credentials,
-      connectedAt: existing?.connectedAt ?? new Date().toISOString(),
-    });
-    await this.pg.query(`DELETE FROM chat_webhooks WHERE connector_id = $1`, [connector.id]);
-    await this.pg.query(
-      `INSERT INTO chat_webhooks (key_hash, connector_id, provider) VALUES ($1, $2, $3)`,
-      [hashKey(connected.credentials.hookKey), connector.id, provider],
+      connected.handle,
+      label?.trim() || connected.name || connected.handle,
+      connected.credentials,
+      existing?.connectedAt,
     );
     return (await this.accounts()).find((a) => a.id === connector.id)!;
   }
@@ -406,7 +484,9 @@ export class ChatAppsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async zaloHook(connector: StoredConnector, call: { method: string; body: string; signature?: string }): Promise<HookReply> {
-    if (call.method !== "POST") return { status: 200, body: "ok" };
+    // Zalo checks the URL when it's saved, before its OA Secret Key exists to sign anything:
+    // answer, but file nothing until the key is added.
+    if (call.method !== "POST" || !(connector.tokens as ZaloCredentials).oaSecretKey) return { status: 200, body: "ok" };
     const message = zaloEvent(connector.tokens as ZaloCredentials, call.body, call.signature);
     if (message) {
       const userId = message.chatId;

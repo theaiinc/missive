@@ -1,4 +1,4 @@
-import { All, Body, Controller, Delete, Get, Param, Post, Req, Res } from "@nestjs/common";
+import { All, Body, Controller, Delete, Get, Param, Post, Query, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { ChatAppsService, type HookInput } from "./chat-apps.service";
 
@@ -26,6 +26,23 @@ export class ChatAppsController {
   async disconnect(@Param("id") id: string) {
     await this.chatApps.disconnect(id);
     return { disconnected: true };
+  }
+
+  /** Zalo: start the OA admin's authorization; the browser goes to the returned URL. */
+  @Post("zalo/authorize")
+  zaloAuthorize(@Body() body: { appId: string; appSecret: string; label?: string }) {
+    return this.chatApps.zaloAuthorize(body?.appId, body?.appSecret, body?.label ?? "");
+  }
+
+  /** Zalo's redirect after "Allow" (the app's Official Account Callback Url). */
+  @Get("zalo/callback")
+  async zaloCallback(@Query("code") code: string | undefined, @Query("state") state: string | undefined, @Res() res: Response) {
+    res.redirect(302, await this.chatApps.zaloCallback(code, state));
+  }
+
+  @Post("accounts/:id/zalo-secret")
+  zaloSecret(@Param("id") id: string, @Body() body: { oaSecretKey: string }) {
+    return this.chatApps.setZaloSecret(id, body?.oaSecretKey);
   }
 
   @Get("conversations")
