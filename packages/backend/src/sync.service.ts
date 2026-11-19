@@ -88,6 +88,8 @@ export class SyncService {
         const mark = String(profile.data.historyId ?? "");
         if (mark && mailboxSeen.get(connector.id) === mark) {
           results[connector.email] = { synced: 0, unchanged: true };
+          // Checked just now, so Settings says so.
+          await this.store.updateLastSyncAt(connector.id).catch(() => {});
           continue;
         }
 
@@ -361,6 +363,8 @@ export class SyncService {
         const mark = messages.map((m) => m.id).join(",");
         if (mailboxSeen.get(connector.id) === mark) {
           results[connector.email] = { synced: 0, unchanged: true };
+          // Checked just now, so Settings says so.
+          await this.store.updateLastSyncAt(connector.id).catch(() => {});
           continue;
         }
         const stored = await this.storage.existingMissiveIds(messages.map((m) => m.id));
