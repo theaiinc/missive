@@ -32,6 +32,15 @@ function reauthResult(
   };
 }
 
+/**
+ * What each account's mailbox looked like at its last complete sync (Gmail's
+ * history id, Outlook's newest message ids), by connector id. A check that
+ * finds the same mailbox stops there: no messages listed, nothing asked of
+ * the database. That's what lets mail be checked every minute. Kept in
+ * memory: after a restart every account syncs once in full.
+ */
+export const mailboxSeen = new Map<string, string>();
+
 @Injectable()
 export class SyncService {
   constructor(
@@ -74,6 +83,14 @@ export class SyncService {
 
         const gmail = google.gmail({ version: "v1", auth: oauth2 as any });
 
+        // Any change to the mailbox (new mail above all) moves its history id.
+        const profile = await gmail.users.getProfile({ userId: "me" });
+        const mark = String(profile.data.historyId ?? "");
+        if (mark && mailboxSeen.get(connector.id) === mark) {
+          results[connector.email] = { synced: 0, unchanged: true };
+          continue;
+        }
+
         const listRes = await gmail.users.messages.list({
           userId: "me",
           maxResults: 50,
@@ -82,8 +99,11 @@ export class SyncService {
 
         const messages = listRes.data.messages ?? [];
         let synced = 0;
+        // One query for the whole list: those stored with a real body need nothing.
+        const settled = await this.storage.settledMissiveIds(messages.map((m) => m.id!));
 
         for (const msg of messages) {
+          if (settled.has(msg.id!)) continue;
           if (
             (await this.importGmailMessage(gmail, connector, msg.id!, true)) ===
             "new"
@@ -92,6 +112,7 @@ export class SyncService {
         }
 
         results[connector.email] = { synced };
+        if (mark) mailboxSeen.set(connector.id, mark);
 
         // Track last sync time
         await this.store.updateLastSyncAt(connector.id).catch(() => {});
@@ -336,8 +357,16 @@ export class SyncService {
         const messages: any[] = listData.value ?? [];
         let synced = 0;
 
+        // The same newest messages as last time: nothing new, nothing to ask the database.
+        const mark = messages.map((m) => m.id).join(",");
+        if (mailboxSeen.get(connector.id) === mark) {
+          results[connector.email] = { synced: 0, unchanged: true };
+          continue;
+        }
+        const stored = await this.storage.existingMissiveIds(messages.map((m) => m.id));
+
         for (const msg of messages) {
-          if (await this.storage.missiveExists(msg.id)) continue;
+          if (stored.has(msg.id)) continue;
 
           const subject = msg.subject ?? "";
           const fromRaw = msg.from?.emailAddress?.address ?? "";
@@ -457,6 +486,7 @@ export class SyncService {
         }
 
         results[connector.email] = { synced };
+        mailboxSeen.set(connector.id, mark);
 
         // Track last sync time
         await this.store.updateLastSyncAt(connector.id).catch(() => {});

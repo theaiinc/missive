@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // vi.mock below is hoisted above this import, so SyncService sees the fake googleapis.
-import { SyncService } from "../sync.service";
+import { SyncService, mailboxSeen } from "../sync.service";
+
+// The mailbox's history id: it moves on every check unless `frozen` (the mailbox unchanged).
+const gmailState = vi.hoisted(() => ({ historyId: 1, frozen: false, lists: 0 }));
 
 // One plain-text message (no text/html part) and one HTML message in the inbox.
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -38,10 +41,14 @@ vi.mock("googleapis", () => ({
   google: {
     gmail: () => ({
       users: {
+        getProfile: async () => ({
+          data: { historyId: String(gmailState.frozen ? gmailState.historyId : ++gmailState.historyId) },
+        }),
         messages: {
-          list: async () => ({
-            data: { messages: Object.keys(messages).map((id) => ({ id })) },
-          }),
+          list: async () => {
+            gmailState.lists++;
+            return { data: { messages: Object.keys(messages).map((id) => ({ id })) } };
+          },
           get: async ({ id }: { id: string }) => ({ data: messages[id] }),
           attachments: { get: async () => ({ data: {} }) },
         },
@@ -65,6 +72,9 @@ function setup() {
         : null;
     },
     missiveExists: async (id: string) => missives.has(id),
+    // Stored with a body that can't be the placeholder (the real check is on its sealed length).
+    settledMissiveIds: async (ids: string[]) =>
+      new Set(ids.filter((id) => missives.has(id) && missives.get(id).body && missives.get(id).body !== "(no content)")),
     saveMissive: async (m: any) => void missives.set(m.id, structuredClone(m)),
     saveAttachments: async () => {},
     getThread: async (id: string) =>
@@ -94,11 +104,28 @@ describe("Gmail sync counts only new messages", () => {
   let env: ReturnType<typeof setup>;
   beforeEach(() => {
     env = setup();
+    mailboxSeen.clear();
   });
 
   it("reports both messages as new on the first sync", async () => {
     const r = await env.sync.syncGmail();
     expect(r["me@example.com"]).toEqual({ synced: 2 });
+  });
+
+  it("doesn't list or look anything up while the mailbox hasn't changed", async () => {
+    gmailState.frozen = true;
+    try {
+      await env.sync.syncGmail();
+      const lists = gmailState.lists;
+      const r = await env.sync.syncGmail();
+      expect(r["me@example.com"]).toEqual({ synced: 0, unchanged: true });
+      expect(gmailState.lists).toBe(lists);
+      gmailState.historyId++;
+      expect((await env.sync.syncGmail())["me@example.com"]).toEqual({ synced: 0 });
+      expect(gmailState.lists).toBe(lists + 1);
+    } finally {
+      gmailState.frozen = false;
+    }
   });
 
   it("reports nothing new when the same messages are synced again", async () => {

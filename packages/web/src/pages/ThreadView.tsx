@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, ImageOff, MailOpen, Reply } from "lucide-react";
-import { useCompose } from "@/components/Compose";
+import { ArrowLeft, FilePen, ImageOff, MailOpen, Reply, Trash2 } from "lucide-react";
+import { draftFromStored, useCompose } from "@/components/Compose";
+import { useDiscardDraft, useDrafts, when } from "@/pages/Drafts";
+import { draftLines, type StoredDraft } from "@/lib/draftSaver";
 import { Attachments } from "@/components/Attachments";
 import { useMe, useSenders } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
@@ -48,6 +50,12 @@ export function ThreadView() {
     queryFn: () => fetchThread(id!),
     enabled: !!id,
   });
+  const { data: drafts } = useDrafts();
+  // Replies you started on this thread and haven't sent, newest first.
+  const threadDrafts = useMemo(
+    () => (drafts ?? []).filter((d) => d.payload.replyTo && d.payload.threadId === id),
+    [drafts, id],
+  );
   const queryClient = useQueryClient();
   const refreshCounts = () => {
     void queryClient.invalidateQueries({ queryKey: ["folders"] });
@@ -184,15 +192,53 @@ export function ThreadView() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-4 space-y-4">
-        {data?.missives.map((missive, index) => (
-          <EmailCard key={missive.id} missive={missive} />
+        {threadDrafts.length > 0 && (
+          <section aria-label="Unsent replies" className="space-y-2">
+            {threadDrafts.map((d) => (
+              <DraftCard key={d.id} draft={d} />
+            ))}
+          </section>
+        )}
+        {data?.missives.map((missive) => (
+          <EmailCard key={missive.id} missive={missive} drafts={threadDrafts} />
         ))}
       </div>
     </div>
   );
 }
 
-function EmailCard({ missive }: { missive: Missive }) {
+/** A reply you started on this thread and haven't sent: carry on with it, or discard it. */
+function DraftCard({ draft }: { draft: StoredDraft }) {
+  const compose = useCompose();
+  const discard = useDiscardDraft();
+  const excerpt = draftLines(draft.payload).join(" ");
+  const to = draft.payload.to?.trim();
+  return (
+    <div className="flex items-start gap-3 border border-dashed border-amber-500/60 bg-amber-500/5 rounded-lg p-3">
+      <FilePen className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+      <button type="button" className="flex-1 min-w-0 text-left" onClick={() => compose(draftFromStored(draft))}>
+        <p className="text-sm font-medium text-foreground">
+          Draft reply, not sent
+          <span className="ml-2 text-xs font-normal text-muted-foreground" title={new Date(draft.updatedAt).toLocaleString()}>
+            saved {when(draft.updatedAt)}
+          </span>
+        </p>
+        {to && <p className="text-xs text-muted-foreground truncate">To {to}</p>}
+        <p className="text-sm text-muted-foreground truncate">{excerpt || "Nothing written yet"}</p>
+      </button>
+      <div className="flex items-center gap-1 shrink-0">
+        <Button size="sm" variant="outline" onClick={() => compose(draftFromStored(draft))}>
+          Continue
+        </Button>
+        <Button size="sm" variant="ghost" title="Discard draft" aria-label="Discard draft" onClick={() => void discard(draft)}>
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function EmailCard({ missive, drafts }: { missive: Missive; drafts: StoredDraft[] }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [translation, setTranslation] = useState<Translation | null>(null);
 
@@ -240,6 +286,12 @@ function EmailCard({ missive }: { missive: Missive }) {
     senders.find((s) => s.kind === "mailbox") ??
     senders[0];
   const reply = async () => {
+    // A reply already started on this thread opens again (this message's first), not a new one beside it.
+    const waiting = drafts.find((d) => d.payload.replyTo === missive.id) ?? drafts[0];
+    if (waiting) {
+      compose(draftFromStored(waiting));
+      return;
+    }
     const outbound = missive.direction === "outbound";
     const subject = missive.subject ?? "";
     // Mail relayed through a group (e.g. "X via info") names the person to answer in Reply-To.
@@ -329,7 +381,7 @@ function EmailCard({ missive }: { missive: Missive }) {
           {mailbox && (
             <Button variant="outline" size="sm" onClick={() => void reply()}>
               <Reply className="w-3.5 h-3.5 mr-1.5" />
-              Reply
+              {drafts.length ? "Continue reply" : "Reply"}
             </Button>
           )}
           {missive.classification && (

@@ -40,9 +40,18 @@ const mail = [
   status: "read",
 }));
 
+// Files on m2, its name encrypted like the rest.
+const files = [{ missive_id: "m2", owner_id: owner, filename: enc("Q3-Contract-Final.pdf") }];
+
 function fakePg() {
   const query = vi.fn(async (sql: string, params?: any[]) => {
     if (/FROM threads/.test(sql)) return { rows: [] };
+    if (/^\s*SELECT missive_id, owner_id, filename FROM attachments/.test(sql)) {
+      return { rows: files.filter((f) => params![0].includes(f.missive_id)).map((f) => ({ ...f })) };
+    }
+    if (/AS files/.test(sql)) {
+      return { rows: mail.map((m) => ({ id: m.id, owner_id: m.owner_id, updated_at: m.updated_at, files: files.filter((f) => f.missive_id === m.id).length })) };
+    }
     const ids: string[] | undefined = /id = ANY/.test(sql) ? params![0] : undefined;
     const rows = mail.filter((m) => !ids || ids.includes(m.id));
     return { rows: rows.map((r) => ({ ...r })) };
@@ -59,6 +68,13 @@ describe("message search", () => {
     expect(await ids("pay by friday")).toEqual(["m1"]);
     expect(await ids("acme")).toEqual(["m1", "m3"]);
     expect((await storage.search({ query: "nothing-like-this" })).total).toBe(0);
+  });
+
+  it("finds mail by the name of a file attached to it", async () => {
+    const storage = new StorageService({ query: fakePg() } as never);
+    const ids = async (q: string) => (await storage.search({ query: q })).missives.map((m) => m.id);
+    expect(await ids("contract-final")).toEqual(["m2"]);
+    expect(await ids("q3-contract")).toEqual(["m2"]);
   });
 
   it("decrypts each message once, not on every search", async () => {

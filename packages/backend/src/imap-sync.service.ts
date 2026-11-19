@@ -5,6 +5,7 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { ConnectorStore, type StoredConnector } from "./connector.store";
 import { StorageService } from "./storage/storage.service";
+import { mailboxSeen } from "./sync.service";
 import { RuleService } from "./rule.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import type { Missive } from "@theaiinc/missive-core";
@@ -138,8 +139,11 @@ export class ImapSyncService {
 
       try {
         // Get message count to determine fetch range (after lock is acquired)
-        const mboxStatus = await client.status("INBOX", { messages: true });
+        const mboxStatus = await client.status("INBOX", { messages: true, uidNext: true, uidValidity: true });
         const total = mboxStatus.messages ?? 0;
+        // The same inbox as at the last complete sync: nothing to download.
+        const mark = `${mboxStatus.uidValidity ?? ""}/${mboxStatus.uidNext ?? ""}/${total}`;
+        if (mboxStatus.uidNext && mailboxSeen.get(connector.id) === mark) return 0;
         const start = Math.max(1, total - 29);
         const range = `${start}:*`;
 
@@ -269,6 +273,7 @@ export class ImapSyncService {
 
           synced++;
         }
+        if (mboxStatus.uidNext) mailboxSeen.set(connector.id, mark);
       } finally {
         lock.release();
         await client.logout();

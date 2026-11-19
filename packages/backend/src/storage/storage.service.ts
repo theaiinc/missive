@@ -42,14 +42,18 @@ export const MISSIVE_LIST_COLUMNS = `id, thread_id, channel, direction, provider
   status, classification, entity_ids, received_at, created_at, updated_at, account_email,
   folder, rules_evaluated_at, organizations, projects, owner_id`;
 
-/** Decrypted, lowercased text of one message, for search. */
-type SearchEntry = { updatedAt: number; text: string; from: string; to: string[] };
+/**
+ * Decrypted, lowercased text of one message, for search. `stamp` is when the
+ * row last changed and how many files it has: files can arrive after the
+ * message (attachments backfill) without changing the row.
+ */
+type SearchEntry = { stamp: string; text: string; from: string; to: string[] };
 /** Shared by every user; keys are owner_id:message id. */
 const searchCache = new Map<string, SearchEntry>();
 /** ~4 KB a message: about 200 MB at most before it starts over. */
 const SEARCH_CACHE_MAX = 50_000;
 
-function toSearchEntry(r: any, updatedAt: number): SearchEntry {
+function toSearchEntry(r: any, stamp: string, files: string[] = []): SearchEntry {
   let recipients: unknown = r.recipients;
   if (typeof recipients === "string") {
     try {
@@ -65,12 +69,13 @@ function toSearchEntry(r: any, updatedAt: number): SearchEntry {
     ? recipients.map((x: any) => String(x?.name ?? "")).join(" ")
     : String(recipients ?? "");
   // Free text matches who it's from and to as well as subject and body
-  // ("byteplus" finds mail from BytePlus <noreply@byteplus.com>).
-  const text = [r.subject, r.body, r.sender_name, r.sender_address, names, to.join(" ")]
+  // ("byteplus" finds mail from BytePlus <noreply@byteplus.com>), and the
+  // names of its files ("contract.pdf").
+  const text = [r.subject, r.body, r.sender_name, r.sender_address, names, to.join(" "), ...files]
     .map((v) => String(v ?? ""))
     .join("\n")
     .toLowerCase();
-  return { updatedAt, text, from: String(r.sender_address ?? "").toLowerCase(), to };
+  return { stamp, text, from: String(r.sender_address ?? "").toLowerCase(), to };
 }
 
 @Injectable()
@@ -95,6 +100,31 @@ export class StorageService {
       [id],
     );
     return rows.length > 0;
+  }
+
+  /** Which of these messages are stored, in one query (sync checks a whole listing at once). */
+  async existingMissiveIds(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const { rows } = await this.pg.query(
+      `SELECT id FROM missives WHERE id = ANY($1::text[])`,
+      [ids],
+    );
+    return new Set(rows.map((r: any) => r.id as string));
+  }
+
+  /**
+   * Which of these messages are stored with a body too long to be the
+   * "(no content)" placeholder: sync has nothing to do for them. The rest
+   * (new, or maybe empty) go through getMissiveSyncState one by one.
+   */
+  async settledMissiveIds(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const { rows } = await this.pg.query(
+      `SELECT id FROM missives WHERE id = ANY($1::text[])
+          AND body IS NOT NULL AND octet_length(body) > ${PLACEHOLDER_BODY_MAX_BYTES}`,
+      [ids],
+    );
+    return new Set(rows.map((r: any) => r.id as string));
   }
 
   /**
@@ -457,29 +487,55 @@ export class StorageService {
     params: any[],
   ): Promise<{ id: string; entry: SearchEntry }[]> {
     const { rows } = await this.pg.query(
-      `SELECT id, owner_id, updated_at FROM missives ${scope} ORDER BY received_at DESC`,
+      `SELECT id, owner_id, updated_at,
+              (SELECT COUNT(*) FROM attachments a WHERE a.missive_id = missives.id)::int AS files
+         FROM missives ${scope} ORDER BY received_at DESC`,
       params,
     );
     const key = (r: any) => `${r.owner_id}:${r.id}`;
-    const stamp = (r: any) => new Date(r.updated_at).getTime();
+    const stamp = (r: any) => `${new Date(r.updated_at).getTime()}/${r.files ?? 0}`;
     const stale = rows.filter(
-      (r: any) => searchCache.get(key(r))?.updatedAt !== stamp(r),
+      (r: any) => searchCache.get(key(r))?.stamp !== stamp(r),
     );
+    const stamps = new Map(rows.map((r: any) => [key(r), stamp(r)]));
     for (let i = 0; i < stale.length; i += 500) {
-      const ids = stale.slice(i, i + 500).map((r: any) => r.id);
-      const res = await this.pg.query(
-        `SELECT id, owner_id, updated_at, subject, body, sender_name, sender_address, recipients
-         FROM missives WHERE id = ANY($1::text[])`,
-        [ids],
-      );
+      const batch = stale.slice(i, i + 500);
+      const ids = batch.map((r: any) => r.id);
+      const withFiles = batch.filter((r: any) => r.files > 0).map((r: any) => r.id);
+      const [res, fileRes] = await Promise.all([
+        this.pg.query(
+          `SELECT id, owner_id, updated_at, subject, body, sender_name, sender_address, recipients
+           FROM missives WHERE id = ANY($1::text[])`,
+          [ids],
+        ),
+        withFiles.length
+          ? this.pg.query(
+              `SELECT missive_id, owner_id, filename FROM attachments WHERE missive_id = ANY($1::text[])`,
+              [withFiles],
+            )
+          : Promise.resolve({ rows: [] as any[] }),
+      ]);
+      const files = new Map<string, string[]>();
+      for (const f of await openRows("attachments", fileRes.rows)) {
+        const k = `${f.owner_id}:${f.missive_id}`;
+        files.set(k, [...(files.get(k) ?? []), String(f.filename ?? "")]);
+      }
       for (const r of await openRows("missives", res.rows)) {
         if (searchCache.size >= SEARCH_CACHE_MAX) searchCache.clear();
-        searchCache.set(key(r), toSearchEntry(r, stamp(r)));
+        searchCache.set(key(r), toSearchEntry(r, stamps.get(key(r)) ?? "", files.get(key(r))));
       }
     }
     return rows
       .map((r: any) => ({ id: r.id as string, entry: searchCache.get(key(r))! }))
       .filter((c) => c.entry);
+  }
+
+  /**
+   * Builds the current user's search index ahead of their first search, so
+   * a search right after a restart doesn't decrypt the whole mailbox first.
+   */
+  async warmSearchIndex(): Promise<void> {
+    await this.searchIndex("WHERE folder <> 'spam' AND status <> 'deleted'", []);
   }
 
   /** Full list rows for these ids, in the given order. */
