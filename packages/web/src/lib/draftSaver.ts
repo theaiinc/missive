@@ -86,10 +86,9 @@ export function draftIsEmpty(payload: DraftPayload): boolean {
   return blank(payload.to) && blank(payload.cc) && blank(payload.bcc) && blank(payload.subject) && body === "" && !payload.attachments?.length;
 }
 
-/** A draft's title in a list: its subject, else the first line written. */
-export function draftTitle(payload: DraftPayload): string {
-  if (payload.subject?.trim()) return payload.subject.trim();
-  const firstLine = (payload.html ?? "")
+/** What you wrote in a draft, as plain lines (no signature or quote). */
+export function draftLines(payload: DraftPayload): string[] {
+  return (payload.html ?? "")
     .replace(/<\/(p|li|h\d)>|<br\s*\/?>/gi, "\n")
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
@@ -100,8 +99,13 @@ export function draftTitle(payload: DraftPayload): string {
     .replace(/&amp;/g, "&")
     .split("\n")
     .map((l) => l.trim())
-    .find(Boolean);
-  return firstLine ?? "(no subject)";
+    .filter(Boolean);
+}
+
+/** A draft's title in a list: its subject, else the first line written. */
+export function draftTitle(payload: DraftPayload): string {
+  if (payload.subject?.trim()) return payload.subject.trim();
+  return draftLines(payload)[0] ?? "(no subject)";
 }
 
 /** JSON with keys sorted, so a payload the database handed back (keys reordered) compares equal. */

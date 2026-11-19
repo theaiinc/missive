@@ -10,8 +10,10 @@ const GMAIL_LOOKUP_MS = 10 * 60_000;
 /** At most this many Gmail matches are brought in per search. */
 const GMAIL_LOOKUP_LIMIT = 10;
 /**
- * A search waits at most this long for Gmail; the lookup keeps going after,
- * so what it brings in shows on the next search (or the next keystroke).
+ * A search never waits for a new Gmail lookup: it answers from Missive's copy
+ * at once and says the lookup is running (`lookingUp`). The page searches
+ * again shortly; that search waits at most this long for the lookup to end.
+ * (Waiting 2.5 s on every new query is what made typing a search feel slow.)
  */
 const GMAIL_LOOKUP_WAIT_MS = 2_500;
 
@@ -19,6 +21,8 @@ const GMAIL_LOOKUP_WAIT_MS = 2_500;
 export class SearchService {
   private readonly log = new Logger("Search");
   private readonly lookedUp = new Map<string, number>();
+  /** Lookups still running, by the same key. */
+  private readonly running = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly storage: StorageService,
@@ -33,18 +37,27 @@ export class SearchService {
   async search(query: SearchQuery): Promise<SearchResult> {
     const text = query.query?.trim();
     const user = currentUser();
+    let lookingUp = false;
     if (text && text.length >= 3 && !query.offset && user && query.folder !== "spam") {
       const key = `${user.id}\n${text.toLowerCase()}`;
+      const inFlight = this.running.get(key);
       const last = this.lookedUp.get(key);
-      if (!last || Date.now() - last > GMAIL_LOOKUP_MS) {
+      if (inFlight) {
+        // The page searching again for this text: wait (a while) for what Gmail brings in.
+        await Promise.race([inFlight, new Promise((r) => setTimeout(r, GMAIL_LOOKUP_WAIT_MS))]);
+        lookingUp = this.running.has(key);
+      } else if (!last || Date.now() - last > GMAIL_LOOKUP_MS) {
         this.lookedUp.set(key, Date.now());
         if (this.lookedUp.size > 1000) this.lookedUp.clear();
         const lookup = this.sync
           .importGmailMatches(text, GMAIL_LOOKUP_LIMIT)
-          .catch((e) => this.log.warn(`Gmail lookup failed: ${safeError(e)}`));
-        await Promise.race([lookup, new Promise((r) => setTimeout(r, GMAIL_LOOKUP_WAIT_MS))]);
+          .catch((e) => this.log.warn(`Gmail lookup failed: ${safeError(e)}`))
+          .finally(() => this.running.delete(key));
+        this.running.set(key, lookup);
+        lookingUp = true;
       }
     }
-    return this.storage.search(query);
+    const result = await this.storage.search(query);
+    return lookingUp ? { ...result, lookingUp } : result;
   }
 }

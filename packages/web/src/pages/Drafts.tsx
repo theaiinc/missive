@@ -17,7 +17,8 @@ export function useDrafts() {
   });
 }
 
-function when(iso: string): string {
+/** When a draft was last saved, the way a list says it ("5 min ago", "Nov 3"). */
+export function when(iso: string): string {
   const date = new Date(iso);
   const minutes = Math.floor((Date.now() - date.getTime()) / 60_000);
   if (minutes < 1) return "just now";
@@ -33,11 +34,26 @@ function recipients(d: StoredDraft): string {
   return parts.length ? parts.join(" · ") : "No recipients yet";
 }
 
+/** Deletes a saved draft after asking; true when it's gone. */
+export function useDiscardDraft() {
+  const queryClient = useQueryClient();
+  return async (d: StoredDraft): Promise<boolean> => {
+    if (!window.confirm(`Discard "${draftTitle(d.payload)}"? It will be deleted.`)) return false;
+    const res = await fetch(`/api/v1/drafts/${encodeURIComponent(d.id)}`, { method: "DELETE" }).catch(() => null);
+    if (!res || (!res.ok && res.status !== 403)) {
+      toast.error("Couldn't discard the draft. Try again.");
+      return false;
+    }
+    queryClient.setQueryData<StoredDraft[]>(["drafts"], (list) => list?.filter((x) => x.id !== d.id));
+    void queryClient.invalidateQueries({ queryKey: ["drafts"] });
+    return true;
+  };
+}
+
 export function Drafts() {
   const { data: drafts, isLoading, isError } = useDrafts();
   const compose = useCompose();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
 
   const open = (d: StoredDraft) => {
     // A reply's draft opens on its thread, so what it answers is right there.
@@ -45,16 +61,7 @@ export function Drafts() {
     compose(draftFromStored(d));
   };
 
-  const discard = async (d: StoredDraft) => {
-    if (!window.confirm(`Discard "${draftTitle(d.payload)}"? It will be deleted.`)) return;
-    const res = await fetch(`/api/v1/drafts/${encodeURIComponent(d.id)}`, { method: "DELETE" }).catch(() => null);
-    if (!res || (!res.ok && res.status !== 403)) {
-      toast.error("Couldn't discard the draft. Try again.");
-      return;
-    }
-    queryClient.setQueryData<StoredDraft[]>(["drafts"], (list) => list?.filter((x) => x.id !== d.id));
-    void queryClient.invalidateQueries({ queryKey: ["drafts"] });
-  };
+  const discard = useDiscardDraft();
 
   return (
     <div className="h-full flex flex-col">

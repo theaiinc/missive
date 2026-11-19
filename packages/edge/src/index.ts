@@ -155,9 +155,12 @@ export class MissiveApi extends Container<Env> {
       LM_STUDIO_WRITING_MODEL: WRITING_MODEL,
       LLM_API_KEY: env.EDGE_SECRET,
       ORGANIZER_SINCE: env.ORGANIZER_SINCE ?? "",
-      // Connected Gmail/Outlook/IMAP accounts sync every 5 minutes (kept awake by the cron below).
-      // Every minute checked each account's 50 newest messages 1,440 times a day, which (with
-      // whole rows fetched per check) used up the database's free transfer quota in two days.
+      // New mail in connected Gmail/Outlook/IMAP accounts is checked every minute (kept awake by
+      // the cron below). A check first asks the provider whether the mailbox changed (Gmail's
+      // history id, Outlook's newest ids, IMAP's next UID) and touches the database only if so:
+      // checking each account's 50 newest messages row by row every minute is what used up the
+      // database's free transfer quota in two days. The organizer, calendars and rules run every 5.
+      MAIL_SYNC_INTERVAL_MS: "60000",
       AUTO_SYNC_INTERVAL_MS: "300000",
       GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "",
       GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET ?? "",

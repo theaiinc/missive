@@ -15,6 +15,7 @@ import { useChat } from "@/hooks/useChat";
 import { NotificationPanel } from "@/components/NotificationPanel";
 import { colorOptions } from "@/hooks/useAccountColors";
 import { apiJson } from "@/lib/api";
+import { useDrafts } from "@/pages/Drafts";
 
 // ── Deterministic org color generator (fallback) ──
 const ORG_PALETTE = [
@@ -264,6 +265,7 @@ export function Inbox() {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
+    refetch,
   } = useInfiniteQuery({
     queryKey: ["missives", folder, activeSearch, orgFilter, projectFilter, unreadOnly],
     queryFn: async ({ pageParam = 0 }) => {
@@ -278,15 +280,34 @@ export function Inbox() {
       if (orgFilter) params.set("organization", orgFilter);
       if (unreadOnly) params.set("status", "unread");
       if (projectFilter) params.set("project", projectFilter);
-      const json = await apiJson<{ missives: Missive[]; total: number }>(`/api/v1/search?${params}`);
-      return { missives: json.missives, total: json.total };
+      const json = await apiJson<{ missives: Missive[]; total: number; lookingUp?: boolean }>(`/api/v1/search?${params}`);
+      return { missives: json.missives, total: json.total, lookingUp: !!json.lookingUp };
     },
+    // While a search is typed, the last results stay up until the new ones
+    // come in, rather than blanking to placeholders on every keystroke.
+    placeholderData: (previous, previousQuery) =>
+      activeSearch && previousQuery?.queryKey[1] === folder && previousQuery?.queryKey[2] ? previous : undefined,
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((sum, p) => sum + p.missives.length, 0);
       return loaded < lastPage.total ? loaded : undefined;
     },
   });
+
+  // Gmail was still being asked for older matches: search once more to show
+  // what it brought in (that search waits for it).
+  const lookingUp = !!data?.pages[0]?.lookingUp;
+  useEffect(() => {
+    if (!lookingUp) return;
+    const timer = setTimeout(() => void refetch(), 1_500);
+    return () => clearTimeout(timer);
+  }, [lookingUp, refetch]);
+
+  // Threads with a reply you started and haven't sent show "Draft".
+  const { data: drafts } = useDrafts();
+  const draftThreads = new Set(
+    (drafts ?? []).filter((d) => d.payload.replyTo && d.payload.threadId).map((d) => d.payload.threadId as string),
+  );
 
   const { data: folders } = useQuery({
     queryKey: ["folders"],
@@ -724,6 +745,11 @@ export function Inbox() {
                         missive.status === "unread" && missive.direction !== "outbound" ? "text-foreground font-semibold" : "text-muted-foreground",
                       )}
                     >
+                      {draftThreads.has(missive.threadId) && (
+                        <span className="mr-1.5 text-amber-600 font-medium" title="A reply you started here hasn't been sent">
+                          Draft
+                        </span>
+                      )}
                       {missive.subject ?? "(no subject)"}
                     </p>
                     {missive.accountEmail && (

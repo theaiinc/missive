@@ -8,18 +8,30 @@ import { SystemEventService } from "./system-event.service";
 import { UsersService } from "./users.service";
 import { runAsUser } from "./request-context";
 import { CalendarService } from "./calendar/calendar.service";
+import { StorageService } from "./storage/storage.service";
 
 /**
- * Periodically syncs all connected accounts on a 5-minute interval,
- * then organizes new missives and generates digests.
+ * Checks every connected account for new mail each minute, and every 5
+ * minutes runs the slower work: files, calendars, the organizer and rules.
+ *
+ * Mail and the slow work used to share one 5-minute tick, run user after
+ * user, so new mail could wait 5 minutes plus however long everyone's
+ * organizer took. A mail check now costs a provider call and, unless
+ * something changed, nothing from the database (SyncService.mailboxSeen).
  */
 @Injectable()
 export class SyncScheduler implements OnModuleInit {
   private readonly logger = new Logger(SyncScheduler.name);
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private mailHandle: ReturnType<typeof setInterval> | null = null;
 
-  /** How often to run the full sync (ms). Default 5 minutes. */
+  /** How often to run the slow work (ms). Default 5 minutes. */
   private readonly intervalMs: number;
+  /** How often to check for new mail (ms). Default 1 minute. */
+  private readonly mailIntervalMs: number;
+  /** A pass still running when the next is due is not started again. */
+  private mailRunning = false;
+  private slowRunning = false;
 
   constructor(
     private readonly sync: SyncService,
@@ -28,24 +40,58 @@ export class SyncScheduler implements OnModuleInit {
     private readonly rules: RuleService,
     private readonly events: SystemEventService,
     private readonly users: UsersService,
-    private readonly calendar: CalendarService
+    private readonly calendar: CalendarService,
+    private readonly storage: StorageService
   ) {
     this.intervalMs = parseInt(process.env.AUTO_SYNC_INTERVAL_MS ?? "300000", 10);
+    this.mailIntervalMs = parseInt(process.env.MAIL_SYNC_INTERVAL_MS ?? "60000", 10);
   }
 
   onModuleInit() {
     this.users.ensureAllFolders().catch((err) => this.logger.error("Folder setup error:", safeError(err)));
 
-    // Run initial organizer pass shortly after startup (5s)
-    setTimeout(() => this.forEachUser(() => this.runOrganizer()), 5_000);
+    // Search indexes first, so the first search after a deploy is quick.
+    setTimeout(() => this.forEachUser(() => this.warmSearch()), 3_000);
 
-    // First sync shortly after startup
-    setTimeout(() => this.forEachUser(() => this.tick()), 15_000);
+    // First mail check shortly after startup, then every minute.
+    setTimeout(() => void this.mailPass(), 10_000);
+    this.mailHandle = setInterval(() => void this.mailPass(), this.mailIntervalMs);
+
+    // The slow work shortly after that, then every 5 minutes.
+    setTimeout(() => void this.slowPass(), 30_000);
+    this.intervalHandle = setInterval(() => void this.slowPass(), this.intervalMs);
 
     this.logger.log(
-      `Auto-sync scheduled every ${this.intervalMs / 1000}s`
+      `Mail checked every ${this.mailIntervalMs / 1000}s; organizer, calendars and rules every ${this.intervalMs / 1000}s`
     );
-    this.intervalHandle = setInterval(() => this.forEachUser(() => this.tick()), this.intervalMs);
+  }
+
+  private async mailPass() {
+    if (this.mailRunning) return;
+    this.mailRunning = true;
+    try {
+      await this.forEachUser(() => this.syncMail());
+    } finally {
+      this.mailRunning = false;
+    }
+  }
+
+  private async slowPass() {
+    if (this.slowRunning) return;
+    this.slowRunning = true;
+    try {
+      await this.forEachUser(() => this.tick());
+    } finally {
+      this.slowRunning = false;
+    }
+  }
+
+  private async warmSearch() {
+    try {
+      await this.storage.warmSearchIndex();
+    } catch (err) {
+      this.logger.error("Search index warm-up error:", safeError(err));
+    }
   }
 
   /** Each user's accounts and mail are only visible as that user, so jobs run once per user. */
@@ -59,7 +105,8 @@ export class SyncScheduler implements OnModuleInit {
     }
   }
 
-  private async tick() {
+  /** New mail from every connected account (Gmail, Outlook, IMAP). */
+  private async syncMail() {
     let syncMessage = "";
 
     try {
@@ -92,20 +139,6 @@ export class SyncScheduler implements OnModuleInit {
       this.logger.error("Auto-sync Outlook error:", safeError(err));
     }
 
-    // Files on mail synced before attachments were kept, once per account.
-    try {
-      await this.sync.backfillAttachments();
-    } catch (err) {
-      this.logger.error("Attachments backfill error:", safeError(err));
-    }
-
-    // Calendars: .ics subscriptions and connected accounts, each only when due.
-    try {
-      await this.calendar.refreshDue();
-    } catch (err) {
-      this.logger.error("Calendar refresh error:", safeError(err));
-    }
-
     try {
       const imapResults = await this.imapSync.syncImap();
       const imapTotal = Object.values(imapResults).reduce(
@@ -122,6 +155,23 @@ export class SyncScheduler implements OnModuleInit {
 
     if (syncMessage) {
       this.events.emit("sync", syncMessage.trim());
+    }
+  }
+
+  /** The slow work: files, calendars, then organizing and rules for what came in. */
+  private async tick() {
+    // Files on mail synced before attachments were kept, once per account.
+    try {
+      await this.sync.backfillAttachments();
+    } catch (err) {
+      this.logger.error("Attachments backfill error:", safeError(err));
+    }
+
+    // Calendars: .ics subscriptions and connected accounts, each only when due.
+    try {
+      await this.calendar.refreshDue();
+    } catch (err) {
+      this.logger.error("Calendar refresh error:", safeError(err));
     }
 
     // After all syncs, organize new missives and generate digest
@@ -188,9 +238,8 @@ export class SyncScheduler implements OnModuleInit {
 
   /** Allow graceful cleanup */
   stop() {
-    if (this.intervalHandle) {
-      clearInterval(this.intervalHandle);
-      this.intervalHandle = null;
-    }
+    for (const handle of [this.intervalHandle, this.mailHandle]) if (handle) clearInterval(handle);
+    this.intervalHandle = null;
+    this.mailHandle = null;
   }
 }

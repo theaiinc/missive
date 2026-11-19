@@ -28,6 +28,11 @@ export interface SearchResult {
   missives: Missive[];
   threads: Thread[];
   total: number;
+  /**
+   * Gmail is still being asked for matches Missive doesn't have yet: search
+   * again shortly to see them (that search waits for the lookup).
+   */
+  lookingUp?: boolean;
 }
 
 // ──────────────────────────────────────────────
