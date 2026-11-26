@@ -6,11 +6,14 @@ import { createPublicKey, verify as verifySignature, type JsonWebKey } from "nod
  * the API as the person with `Authorization: Bearer <JWT>`. No token to paste.
  *
  * Aegis lists this resource in its OIDC_RESOURCE_SERVERS with the scope
- * missive:read, and signs the token (RS256, its /jwks) with aud = the resource
- * and the person's Aegis subject. Read-only: such a token reaches only the
- * GET routes in AEGIS_READ_ROUTES.
+ * missive:read (and missive:send), and signs the token (RS256, its /jwks) with
+ * aud = the resource and the person's Aegis subject. With missive:read a token
+ * reaches only the GET routes in AEGIS_READ_ROUTES; with missive:send also the
+ * reply routes in AEGIS_SEND_ROUTES (Missive addresses those replies itself,
+ * from the address the mail came to: reply.service.ts).
  */
 export const AEGIS_API_SCOPE = "missive:read";
+export const AEGIS_SEND_SCOPE = "missive:send";
 
 const issuer = (env: NodeJS.ProcessEnv) => (env.AEGIS_ISSUER ?? "https://id.theaiinc.com").replace(/\/+$/, "");
 
@@ -29,8 +32,16 @@ const AEGIS_READ_ROUTES = [
   /^\/api\/v1\/digest$/,
 ];
 
-export const aegisTokenAllowed = (method: string, path: string) =>
-  method === "GET" && AEGIS_READ_ROUTES.some((route) => route.test(path));
+/** Replying to a message, for a token with missive:send. No other sending, moving or deleting. */
+const AEGIS_SEND_ROUTES = [/^\/api\/v1\/reply(\/preview)?$/];
+
+export const isAegisSendRoute = (method: string, path: string) =>
+  method === "POST" && AEGIS_SEND_ROUTES.some((route) => route.test(path));
+
+/** Whether an Aegis token with these scopes may make this request (no scopes given: only the read scope). */
+export const aegisTokenAllowed = (method: string, path: string, scopes: string[] = [AEGIS_API_SCOPE]) =>
+  (scopes.includes(AEGIS_API_SCOPE) && method === "GET" && AEGIS_READ_ROUTES.some((route) => route.test(path))) ||
+  (scopes.includes(AEGIS_SEND_SCOPE) && isAegisSendRoute(method, path));
 
 /** Shaped like a JWT (three base64url parts); msv_ tokens and random values are not. */
 export const looksLikeJwt = (value: string) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
@@ -75,7 +86,7 @@ export async function verifyAegisApiToken(
   token: string,
   env: NodeJS.ProcessEnv = process.env,
   fetchJson: FetchJson = defaultFetchJson,
-): Promise<{ sub: string; email?: string }> {
+): Promise<{ sub: string; email?: string; scopes: string[] }> {
   const [h, p, sig] = token.split(".");
   if (!h || !p || !sig) throw new Error("malformed");
   let header: { alg?: string; kid?: string };
@@ -98,7 +109,8 @@ export async function verifyAegisApiToken(
   const now = Date.now() / 1000;
   if (typeof claims.exp !== "number" || claims.exp < now) throw new Error("expired");
   if (typeof claims.nbf === "number" && claims.nbf > now + 60) throw new Error("not_yet_valid");
-  if (!String(claims.scope ?? "").split(" ").includes(AEGIS_API_SCOPE)) throw new Error("scope");
+  const scopes = String(claims.scope ?? "").split(" ").filter(Boolean);
+  if (!scopes.includes(AEGIS_API_SCOPE) && !scopes.includes(AEGIS_SEND_SCOPE)) throw new Error("scope");
   if (typeof claims.sub !== "string" || !claims.sub) throw new Error("subject");
-  return { sub: claims.sub, email: claims.email_verified === true && typeof claims.email === "string" ? claims.email : undefined };
+  return { sub: claims.sub, email: claims.email_verified === true && typeof claims.email === "string" ? claims.email : undefined, scopes };
 }

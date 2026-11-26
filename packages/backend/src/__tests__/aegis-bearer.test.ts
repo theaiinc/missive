@@ -53,7 +53,7 @@ describe("aegisApiResource", () => {
 
 describe("verifyAegisApiToken", () => {
   it("accepts a token Aegis issued for this API", async () => {
-    await expect(verifyAegisApiToken(jwt(valid()), env, fetchJson)).resolves.toEqual({ sub: ALICE_SUB, email: ALICE.email });
+    await expect(verifyAegisApiToken(jwt(valid()), env, fetchJson)).resolves.toEqual({ sub: ALICE_SUB, email: ALICE.email, scopes: ["openid", "email", "offline_access", "missive:read"] });
   });
 
   it("caches Aegis's keys", async () => {
@@ -82,7 +82,7 @@ describe("verifyAegisApiToken", () => {
   });
 
   it("leaves out an unverified email", async () => {
-    await expect(verifyAegisApiToken(jwt(valid({ email_verified: false })), env, fetchJson)).resolves.toEqual({ sub: ALICE_SUB, email: undefined });
+    await expect(verifyAegisApiToken(jwt(valid({ email_verified: false })), env, fetchJson)).resolves.toMatchObject({ sub: ALICE_SUB, email: undefined });
   });
 });
 
@@ -95,6 +95,20 @@ describe("aegisTokenAllowed", () => {
     for (const path of ["/api/v1/api-tokens", "/api/v1/admin/users", "/api/v1/connectors", "/api/v1/missive/abc/move", "/api/v1/chat"]) {
       expect(aegisTokenAllowed("GET", path), path).toBe(false);
     }
+  });
+
+  it("allows replying only with missive:send, only with POST, and nothing else it doesn't list", () => {
+    const send = ["missive:read", "missive:send"];
+    expect(aegisTokenAllowed("POST", "/api/v1/reply")).toBe(false);
+    expect(aegisTokenAllowed("POST", "/api/v1/reply/preview")).toBe(false);
+    expect(aegisTokenAllowed("POST", "/api/v1/reply", send)).toBe(true);
+    expect(aegisTokenAllowed("POST", "/api/v1/reply/preview", send)).toBe(true);
+    expect(aegisTokenAllowed("GET", "/api/v1/reply", send)).toBe(false);
+    for (const path of ["/api/v1/send", "/api/v1/missive/abc/move", "/api/v1/drafts", "/api/v1/reply/x"]) {
+      expect(aegisTokenAllowed("POST", path, send), path).toBe(false);
+    }
+    // Send alone doesn't read.
+    expect(aegisTokenAllowed("GET", "/api/v1/search", ["missive:send"])).toBe(false);
   });
 
   it("tells JWTs from msv_ tokens", () => {
@@ -150,6 +164,15 @@ describe("AuthMiddleware with an Aegis token", () => {
     expect(await call(middleware, "GET", "/api/v1/admin/users", jwt(valid()))).toMatchObject({ status: 403, ranAs: null });
     expect(await call(middleware, "GET", "/api/v1/api-tokens", jwt(valid()))).toMatchObject({ status: 403, ranAs: null });
     expect(users.idForAegisSub).not.toHaveBeenCalled();
+  });
+
+  it("lets a reply through only for a token with missive:send", async () => {
+    const { middleware } = setup();
+    expect(await call(middleware, "POST", "/api/v1/reply", jwt(valid()))).toMatchObject({ status: 403, ranAs: null });
+    expect(await call(middleware, "POST", "/api/v1/reply/preview", jwt(valid()))).toMatchObject({ status: 403, ranAs: null });
+    const sender = jwt(valid({ scope: "openid email offline_access missive:read missive:send" }));
+    expect(await call(middleware, "POST", "/api/v1/reply", sender)).toMatchObject({ status: 200, ranAs: { id: ALICE.id, via: "aegis" } });
+    expect(await call(middleware, "POST", "/api/v1/send", sender)).toMatchObject({ status: 403, ranAs: null });
   });
 
   it("refuses an invalid token, and someone who has never used Missive", async () => {
