@@ -6,7 +6,7 @@ import { REFRESH_COOKIE, SESSION_COOKIE, cookie, readCookie, unseal, type Sessio
 import { refreshSession } from "./refresh";
 import { siteFor } from "./sites";
 import { ApiTokensService, TOKEN_PREFIX } from "./api-tokens";
-import { aegisTokenAllowed, looksLikeJwt, verifyAegisApiToken } from "./aegis-bearer";
+import { AEGIS_API_SCOPE, AEGIS_SEND_SCOPE, aegisTokenAllowed, isAegisSendRoute, looksLikeJwt, verifyAegisApiToken } from "./aegis-bearer";
 
 /** Routes that don't need a signed-in user (they check their own credentials). */
 const PUBLIC = [/^\/auth\//, /^\/api\/v1\/health$/, /^\/api\/v1\/inbound$/, /^\/api\/v1\/hooks\/(wecom|zalo)\/[\w-]+$/];
@@ -76,15 +76,26 @@ export class AuthMiddleware implements NestMiddleware {
       return runAsUser({ ...owner, via: "token" }, () => next());
     }
     if (bearer && looksLikeJwt(bearer)) {
-      if (!aegisTokenAllowed(req.method, path)) {
+      if (!aegisTokenAllowed(req.method, path, [AEGIS_API_SCOPE, AEGIS_SEND_SCOPE])) {
         res.status(403).json({ error: "Not available with an Aegis token" });
         return;
       }
       let userId: string | null = null;
+      let scopes: string[] = [];
       try {
-        userId = await this.users.idForAegisSub((await verifyAegisApiToken(bearer)).sub);
+        const verified = await verifyAegisApiToken(bearer);
+        scopes = verified.scopes;
+        userId = await this.users.idForAegisSub(verified.sub);
       } catch {
         userId = null;
+      }
+      if (userId && !aegisTokenAllowed(req.method, path, scopes)) {
+        res.status(403).json({
+          error: isAegisSendRoute(req.method, path)
+            ? "This connection can only read mail. Reconnect Missive and allow it to send replies."
+            : "Not available with an Aegis token",
+        });
+        return;
       }
       const owner = userId ? await this.userFor(userId) : null;
       if (!owner) {
